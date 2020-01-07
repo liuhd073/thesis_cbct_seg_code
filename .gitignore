@@ -102,3 +102,13 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Pickle files
+*.p 
+*.pt 
+
+# testing files
+testing/
+
+# Tensorboard files
+runs/
