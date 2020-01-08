@@ -101,13 +101,14 @@ def train(args):
     # patient = list(image_shapes.keys())[0]
     # image_shapes_0 = {patient: image_shapes[patient]}
        
-    # ds = CervixDataset([patient], root_dir, image_shapes_0, conebeams=True)
+    # ds = CervixDataset(args.root_dir, image_shapes_0, conebeams=True)
     
     # Dataset for ONE CT image
     image_shapes = pickle.load(open("CT_shapes.p", 'rb'))
-    image_shapes_0 = {patients[0]: image_shapes[patients[0]]}
+    # cbct = patients[0] + "\\X01"
+    # image_shapes_0 = {cbct: image_shapes[cbct]}
         
-    ds = CervixDataset(patients[:1], args.root_dir, image_shapes_0, conebeams=False)
+    ds = CervixDataset(args.root_dir, image_shapes, conebeams=False)
     dl = DataLoader(ds, batch_size=1, shuffle=False)
 
     writer = SummaryWriter()
@@ -120,12 +121,14 @@ def train(args):
 
     print("Loading Model...")
     model = ResBlockUnet(1, 3, (1, 512, 512))
+    if args.load_model:
+        model.load_state_dict(torch.load(open(args.model_file, 'rb')))
+        print("Model loaded!")
     model.to(device)
     
     optimizer = Adam(model.parameters(), lr=args.lr)
 
-    criterion = nn.BCELoss()
-    # criterion = DiceLoss()
+    criterion = nn.BCEWithLogitsLoss()
     softmax = nn.Sigmoid()
 
     losses = []
@@ -136,26 +139,39 @@ def train(args):
     for j in range(args.max_iters):
         img_losses = []
         for i, (X, Y) in enumerate(dl):
+            model.train()
             X, Y = X.to(device).float(), Y.to(device).float()
             X = X - X.mean()
-            model.train()
+
+            if args.mc_train:
+                if len(Y.argmax(1).unique()) < 2:
+                    continue
+
             Y_hat = model(X)
             assert Y_hat.shape == Y.shape, "output and classification must be same shape"
+            loss = criterion(Y_hat, Y)
             
-            loss = criterion(softmax(Y_hat), Y)
+            Y_hat = softmax(Y_hat)
+
             losses.append(loss.item())
             img_losses.append(loss.item())
+            writer.add_scalar("loss/slice", loss.item(), j * len(dl) + i)
+
+
+            # if j%50 == 0:
+            #     writer.add_image("images_true/0", Y[:,0,:,:,:].squeeze(), j * len(dl) + i, dataformats="HW")
+            #     writer.add_image("images_true/1", Y[:,1,:,:,:].squeeze(), j * len(dl) + i, dataformats="HW")
+            #     writer.add_image("images_true/2", Y[:,2,:,:,:].squeeze(), j * len(dl) + i, dataformats="HW")
+
+
+            #     writer.add_image("images/0", Y_hat[:,0,:,:,:].squeeze(), j * len(dl) + i, dataformats="HW")
+            #     writer.add_image("images/1", Y_hat[:,1,:,:,:].squeeze(), j * len(dl) + i, dataformats="HW")
+            #     writer.add_image("images/2", Y_hat[:,2,:,:,:].squeeze(), j * len(dl) + i, dataformats="HW")
 
             torch.cuda.empty_cache()
 
             if (j * len(dl) + i) % args.print_every == 0:
                 print("Iteration: {}/{} Loss: {}".format(j * len(dl) + i, len(dl) * args.max_iters, loss.item()))
-
-
-            if (j * len(dl) + i) % args.save_every == 0:
-                # model.save_state_dict('model.pt')
-                save = 1
-                # Save Model
 
             # Train model
             optimizer.zero_grad()
@@ -164,13 +180,23 @@ def train(args):
 
         avg_loss = sum(img_losses) / len(img_losses)
         image_losses.append(avg_loss)
+        writer.add_scalar("loss/image", avg_loss, j)
         if avg_loss < best_loss:
             best_loss = avg_loss
             torch.save(model.state_dict(), "best_model.pt")
+            print("Best model saved")
 
         print("Iteration: {}/{} Average Loss: {}".format(j * len(dl) + i, len(dl) * args.max_iters, avg_loss))
+
+        if j % args.save_every == 0:
+            # Save Model
+            torch.save(model.state_dict(), "model_{}.pt".format(j))
+
+        if j == 75:
+            args.mc_train = False
+
      
-    print("End training...")
+    print("End training, save final model...")
     torch.save(model.state_dict(), "final_model.pt")
 
 
@@ -178,12 +204,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Get data shapes')
 
     parser.add_argument("-root_dir", help="Get root directory of data", default="/data/cervix/patients", required=False)
+    parser.add_argument("-model_file", help="Get the file containing the model weights", default="final_model.pt", required=False)
+    parser.add_argument("-load_model", help="Get the model weights", default=False, required=False, action="store_true")
 
-    parser.add_argument("-lr", help="Learning Rate", default=0.0001, required=False)
+    parser.add_argument("-lr", help="Learning Rate", default=0.0001, required=False, type=float)
+    parser.add_argument("-mc_train", help="Only train using images with at least 2 classes", default=False, required=False, action="store_true")
 
-    parser.add_argument("-max_iters", help="Maximum number of iterations", default=10, required=False)
-    parser.add_argument("-print_every", help="Print every X iterations", default=10, required=False)
-    parser.add_argument("-save_every", help="Save model every X iterations", default=10, required=False)
+    parser.add_argument("-max_iters", help="Maximum number of iterations", default=10, required=False, type=int)
+    parser.add_argument("-print_every", help="Print every X iterations", default=10, required=False, type=int)
+    parser.add_argument("-save_every", help="Save model every X iterations", default=10, required=False, type=int)
     
     args = parser.parse_args()
 
@@ -191,3 +220,5 @@ if __name__ == "__main__":
 
     train(args)
 
+# python train.py -max_iters 100 -save_every 10 -mc_train
+# Train on all 10 patient CT images. 

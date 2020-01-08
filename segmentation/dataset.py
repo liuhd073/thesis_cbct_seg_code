@@ -11,18 +11,19 @@ import re
 
 
 class CervixDataset(Dataset):
-    def __init__(self, patients, root_dir, image_shapes, conebeams=True, shuffle=False):
+    def __init__(self, root_dir, image_shapes, conebeams=True, shuffle=False):
         super(CervixDataset, self).__init__()
         self.conebeam = conebeams
         self.CBCTs = defaultdict(list)
         self.CTs = defaultdict(list)
         self.root_dir = root_dir
-        self.patients = patients
-        if self.conebeam:
-            self.patients = list(image_shapes.keys())
+        self.patients = list(image_shapes.keys())
+        if self.conebeam:            
             self.get_CBCTs()
         else:
             self.get_CTs()
+
+        print(self.patients)
 
         self.shuffle = shuffle
         if shuffle:
@@ -86,7 +87,6 @@ class CervixDataset(Dataset):
             images = self.CBCTs[patient]
         else:
             images = self.CTs[patient]
-
         image_path, segmentations = images[0]
         segmentation = self._get_segmentation(segmentations)
         print('loading', image_path)
@@ -100,9 +100,7 @@ class CervixDataset(Dataset):
         image = (image - image.min()) / image.max()
         if self.conebeam:
             image = np.swapaxes(image, 1, 2)
-            print(segmentation.shape)
             segmentation = np.swapaxes(segmentation, 1, 2)
-            print(segmentation.shape)
         return image, segmentation
 
     def _update_random_list(self):
