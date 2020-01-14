@@ -39,7 +39,8 @@ def get_shapes_cbct(root_dir):
     return shapes
 
 def main(args):
-    shapes = get_shapes(args.root_dir)
+    shapes = get_shapes_cbct(args.root_dir)
+    print("Save shapes")
     pickle.dump(shapes, open(args.filename, 'wb'))
     
 

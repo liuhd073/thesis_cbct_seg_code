@@ -38,8 +38,9 @@ def train(args):
     ds = CervixDataset(args.root_dir, image_shapes, conebeams=False)
     dl = DataLoader(ds, batch_size=1, shuffle=False)
 
-    for i, (X, Y) in enumerate(dl):
-        print("{}/{} X: {} Y: {}".format(i, len(dl), X.shape, Y.shape))
+    for j in range(2):
+        for i, (X, Y) in enumerate(dl):
+            print("{} {}/{} X: {} Y: {}".format(j, i, len(dl), X.shape, Y.shape))
 
 
 

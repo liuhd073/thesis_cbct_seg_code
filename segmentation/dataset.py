@@ -11,7 +11,7 @@ import re
 
 
 class CervixDataset(Dataset):
-    def __init__(self, root_dir, image_shapes, conebeams=True, shuffle=False):
+    def __init__(self, root_dir, image_shapes, transform=None, conebeams=True, shuffle=False):
         super(CervixDataset, self).__init__()
         self.conebeam = conebeams
         self.CBCTs = defaultdict(list)
@@ -23,7 +23,7 @@ class CervixDataset(Dataset):
         else:
             self.get_CTs()
 
-        print(self.patients)
+        self.transform = transform
 
         self.shuffle = shuffle
         if shuffle:
@@ -108,10 +108,21 @@ class CervixDataset(Dataset):
         np.random.shuffle(self.random_order)
 
     def __getitem__(self, i):
+        if i == 0:
+            self.total = 0
+            self.patient_idx = 0
+            if self.conebeam:
+                self.n_current_slices = self.image_shapes[self.patients[self.patient_idx]][-2]
+            else:    
+                self.n_current_slices = self.image_shapes[self.patients[self.patient_idx]][-3]
+            self.image, self.segmentation = self._load_image(self.patient_idx)
+            if self.shuffle:
+                self._update_random_list()
         # Assuming i is incremental (not random)
         if i - self.total == self.n_current_slices:
             # update image and segmentation
             self.total += self.n_current_slices
+            
             self.patient_idx += 1
             if self.conebeam:
                 self.n_current_slices = self.image_shapes[self.patients[self.patient_idx]][-2]
@@ -126,8 +137,12 @@ class CervixDataset(Dataset):
             slice_idx = self.random_order[slice_idx]
         im_slice = crop_to_bbox(self.image, (0, slice_idx-10, 0, 0, 1, 21, 512, 512))
         seg_slice = self.segmentation[:, slice_idx:slice_idx+1, :, :]
+
         if self.conebeam:
             seg_slice = crop_to_bbox(seg_slice, (0, slice_idx, 0, 0, 3, 1, 512, 512))
+
+        if self.transform:
+            imslice = self.transform(im_slice)
 
         return im_slice, seg_slice
 
