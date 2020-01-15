@@ -18,7 +18,7 @@ import pickle
 import torch
 import os
 
-def get_model(args):
+def get_model(args, device):
     print("Loading Model...")
     model = ResBlockUnet(1, 3, (1, 512, 512))
     if args.load_model:
@@ -29,16 +29,26 @@ def get_model(args):
     return model
 
 
-def evaluate(dl_val, model):
+def evaluate(dl_val, model, criterion, writer, j):
     dataset_mean = 0.7
+    losses = []
     model.eval()
     for (X,Y) in dl_val:
-        Y_hat = model(X)
+        X, Y = X.to(device).float(), Y.to(device).float()
+        X = X - dataset_mean
 
+        Y_hat = model(X)
+        loss = criterion(Y_hat, Y)
+
+        losses.append(loss.item())
+        # TODO: CONTINUE
+
+    loss = np.mean(losses)
+    writer.add_scalar("loss/validation", loss, j)
     return loss
 
 
-def train(model, dl, optimizer, criterion, softmax, args, writer, device, j):
+def train(model, dl, optimizer, criterion, args, writer, device, j):
     dataset_mean = 0.7
     losses = []
     tmp_losses = []
@@ -55,8 +65,6 @@ def train(model, dl, optimizer, criterion, softmax, args, writer, device, j):
         assert Y_hat.shape == Y.shape, "output and classification must be same shape"
         loss = criterion(Y_hat, Y)
         
-        Y_hat = softmax(Y_hat)
-
         losses.append(loss.item())
         tmp_losses.append(loss.item())
         writer.add_scalar("loss/train", loss.item(), j * len(dl) + i)
@@ -80,15 +88,19 @@ def main(args):
 
     device = "cuda" # Run on GPU
 
-    image_shapes = pickle.load(open("CT_shapes.p", 'rb')) # change to train
+    image_shapes = pickle.load(open("CT_shapes_train.p", 'rb')) # training
+    image_shapes_val = pickle.load(open("CT_shapes_validation.p", 'rb')) # validation
         
     transform = transforms.Compose([Clip(), NormalizeHV()])
     ds = CervixDataset(args.root_dir, image_shapes, transform=transform, conebeams=False)
     dl = DataLoader(ds, batch_size=1, shuffle=False)
 
+    ds_val = CervixDataset(args.root_dir, image_shapes_val, transform=transform, conebeams=False)
+    dl_val = DataLoader(ds_val, batch_size=1, shuffle=False)
+
     writer = SummaryWriter()
 
-    model = get_model(args)
+    model = get_model(args, device)
     optimizer = Adam(model.parameters(), lr=args.lr)
 
     criterion = nn.BCEWithLogitsLoss()
@@ -96,12 +108,14 @@ def main(args):
 
     best_loss = float('inf')
     image_losses = []
+    all_losses = []
 
     print("Start Training...")
 
     for j in range(args.max_iters):
         avg_loss, losses = train(model, dl, optimizer, criterion, softmax, args, writer, device, j)
         image_losses.append(avg_loss)
+        all_losses += losses
 
         writer.add_scalar("loss/image", avg_loss, j)
         if avg_loss < best_loss:
@@ -111,19 +125,18 @@ def main(args):
 
         print("Iteration: {}/{} Average Loss: {}".format((j + 1) * len(dl), len(dl) * args.max_iters, avg_loss))
 
+        if j % args.eval_every == 0:
+            evaluate(dl_val, model, criterion, writer, j)
+
         if j % args.save_every == 0:
             # Save Model
             torch.save(model.state_dict(), "model_{}.pt".format(j))
 
-        if j == 75:
-            args.mc_train = False
-
-        # TODO: COMBINE LOSSES
-
+        
      
     print("End training, save final model...")
     torch.save(model.state_dict(), "final_model.pt")
-    pickle.dump(losses, open("losses.p", 'wb'))
+    pickle.dump(all_losses, open("losses.p", 'wb'))
     pickle.dump(image_losses, open("avg_losses.p", 'wb'))
 
 
@@ -140,6 +153,7 @@ if __name__ == "__main__":
     parser.add_argument("-max_iters", help="Maximum number of iterations", default=10, required=False, type=int)
     parser.add_argument("-print_every", help="Print every X iterations", default=10, required=False, type=int)
     parser.add_argument("-save_every", help="Save model every X epochs", default=1, required=False, type=int)
+    parser.add_argument("-eval_every", help="Evaluate model every X epochs using validation set", default=1, required=False, type=int)
     
     args = parser.parse_args()
 
