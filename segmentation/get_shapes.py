@@ -39,7 +39,12 @@ def get_shapes_cbct(root_dir):
     return shapes
 
 def main(args):
-    shapes = get_shapes_cbct(args.root_dir)
+    if args.CBCT:
+        print("parse CBCTs")
+        shapes = get_shapes_cbct(args.root_dir)
+    else:
+        print("parse CTs")
+        shapes = get_shapes(args.root_dir)
     print("Save shapes")
     pickle.dump(shapes, open(args.filename, 'wb'))
     
@@ -47,8 +52,10 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Get data shapes')
 
+    parser.add_argument("-CBCT", required=False, help="Parse CBCT shapes", default=False, action="store_true")
+
     parser.add_argument("-root_dir", required=False, help="Get root directory of data", default="/data/cervix/patients")
-    parser.add_argument("-filename", required=False, help="give filename for shapes pickle", default="CBCT_shapes.p")
+    parser.add_argument("-filename", required=False, help="give filename for shapes pickle", default="CT_shapes.p")
 
     args = parser.parse_args()
 
