@@ -5,7 +5,7 @@ import argparse
 def main(args):
     print("CT input:", args.CT_filename)
     print("CT output:", args.output_CT_filename + "_train.p")
-    image_shapes_CT = pickle.load(open("CT_shapes.p", 'rb'))
+    image_shapes_CT = pickle.load(open(args.CT_filename, 'rb'))
     patients = list(image_shapes_CT.keys())
     
     patients_CT_train = patients[:int(args.ratio*len(patients))]
