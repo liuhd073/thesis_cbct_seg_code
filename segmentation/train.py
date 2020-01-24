@@ -1,31 +1,28 @@
+import pickle
+import os
+import torch
+import argparse
+import numpy as np
+import matplotlib.pyplot as plt
+import torchvision.transforms as transforms
+from torch.utils.tensorboard import SummaryWriter
+from torch.nn import functional as F
+import torch.nn as nn
+from torch.optim import Adam
+from resblockunet import ResBlockUnet
+from torch.utils.data import DataLoader
+from preprocess import Clip, NormalizeHV
+from dataset_extra_CTs import CervixDataset
 print(__name__)
 
 # from dataset import CervixDataset
-from dataset_extra_CTs import CervixDataset
-from preprocess import Clip, NormalizeHV
-from torch.utils.data import DataLoader
-from resblockunet import ResBlockUnet
-from torch.optim import Adam
-
-import torch.nn as nn
-from torch.nn import functional as F
-from torch.utils.tensorboard import SummaryWriter
-import torchvision.transforms as transforms
-
-import matplotlib.pyplot as plt
-import numpy as np
-
-import argparse
-import pickle 
-import torch
-import os
 
 
 def get_loss_func(loss_func="BCE"):
     if loss_func == "BCE":
         return nn.BCEWithLogitsLoss()
     if loss_func == "NLL":
-        weights = torch.Tensor([1,1,0.0001]).to("cuda")
+        weights = torch.Tensor([1, 1, 0.0001]).to("cuda")
         return nn.NLLLoss(weight=weights)
 
 
@@ -36,7 +33,7 @@ def get_model(args, device):
         model.load_state_dict(torch.load(open(args.model_file, 'rb')))
         print("Model loaded!")
     model.to(device)
-    
+
     return model
 
 
@@ -44,8 +41,8 @@ def evaluate(dl_val, model, device, criterion, writer, j):
     dataset_mean = 0.7
     losses = []
     model.eval()
-    
-    for (X,Y) in dl_val:
+
+    for (X, Y) in dl_val:
         X, Y = X.to(device).float(), Y.to(device).float()
         X = X - dataset_mean
         torch.cuda.empty_cache()
@@ -54,7 +51,7 @@ def evaluate(dl_val, model, device, criterion, writer, j):
 
         losses.append(loss.item())
         torch.cuda.empty_cache()
-        
+
     loss = np.mean(losses)
     writer.add_scalar("loss/validation", loss, j)
     return loss
@@ -80,7 +77,7 @@ def train(model, dl, optimizer, criterion, args, writer, device, j):
             Y_hat = softmax(Y_hat)
             Y = Y.argmax(1)
         loss = criterion(Y_hat, Y)
-        
+
         losses.append(loss.item())
         tmp_losses.append(loss.item())
         writer.add_scalar("loss/train", loss.item(), j * len(dl) + i)
@@ -88,7 +85,8 @@ def train(model, dl, optimizer, criterion, args, writer, device, j):
         torch.cuda.empty_cache()
 
         if (j * len(dl) + i) % args.print_every == 0:
-            print("Iteration: {}/{} Loss: {}".format(j * len(dl) + i, len(dl) * args.max_iters, loss.item()))
+            print("Iteration: {}/{} Loss: {}".format(j * len(dl) +
+                                                     i, len(dl) * args.max_iters, loss.item()))
 
         # Train model
         optimizer.zero_grad()
@@ -100,18 +98,19 @@ def train(model, dl, optimizer, criterion, args, writer, device, j):
 
 
 def main(args):
-    patients = os.listdir(args.root_dir)
+    device = "cuda"  # Run on GPU
 
-    device = "cuda" # Run on GPU
+    image_shapes = pickle.load(
+        open("extra_CT_shapes_train.p", 'rb'))  # training
+    image_shapes_val = pickle.load(
+        open("extra_CT_shapes_validation.p", 'rb'))  # validation
 
-    image_shapes = pickle.load(open("extra_CT_shapes_train.p", 'rb')) # training
-    image_shapes_val = pickle.load(open("extra_CT_shapes_validation.p", 'rb')) # validation
-        
     transform = transforms.Compose([Clip(), NormalizeHV()])
     ds = CervixDataset(args.root_dir, image_shapes, transform=transform)
     dl = DataLoader(ds, batch_size=1, shuffle=False)
 
-    ds_val = CervixDataset(args.root_dir, image_shapes_val, transform=transform)
+    ds_val = CervixDataset(
+        args.root_dir, image_shapes_val, transform=transform)
     dl_val = DataLoader(ds_val, batch_size=1, shuffle=False)
 
     writer = SummaryWriter()
@@ -120,7 +119,6 @@ def main(args):
     optimizer = Adam(model.parameters(), lr=args.lr)
 
     criterion = get_loss_func(args.loss_func)
-    softmax = nn.Sigmoid()
 
     best_loss = float('inf')
     image_losses = []
@@ -129,7 +127,8 @@ def main(args):
     print("Start Training...")
 
     for j in range(args.max_iters):
-        avg_loss, losses = train(model, dl, optimizer, criterion, args, writer, device, j)
+        avg_loss, losses = train(model, dl, optimizer,
+                                 criterion, args, writer, device, j)
         image_losses.append(avg_loss)
         all_losses += losses
 
@@ -139,7 +138,8 @@ def main(args):
             torch.save(model.state_dict(), "best_model.pt")
             print("Best model saved")
 
-        print("Iteration: {}/{} Average Loss: {}".format((j + 1) * len(dl), len(dl) * args.max_iters, avg_loss))
+        print("Iteration: {}/{} Average Loss: {}".format((j + 1)
+                                                         * len(dl), len(dl) * args.max_iters, avg_loss))
 
         if j % args.save_every == 0:
             # Save Model
@@ -148,9 +148,9 @@ def main(args):
 
         if j % args.eval_every == 0:
             eval_loss = evaluate(dl_val, model, device, criterion, writer, j)
-            print("Epoch: {}/{} Validation Loss: {}".format(j, args.max_iters, eval_loss))
+            print("Epoch: {}/{} Validation Loss: {}".format(j,
+                                                            args.max_iters, eval_loss))
 
-        
     print("End training, save final model...")
     torch.save(model.state_dict(), "final_model.pt")
     pickle.dump(all_losses, open("losses.p", 'wb'))
@@ -160,26 +160,37 @@ def main(args):
 def parse_args():
     parser = argparse.ArgumentParser(description='Get data shapes')
 
-    parser.add_argument("-root_dir", help="Get root directory of data", default="/data/cervix/patients", required=False)
-    parser.add_argument("-model_file", help="Get the file containing the model weights", default="final_model.pt", required=False)
-    parser.add_argument("-load_model", help="Get the model weights", default=False, required=False, action="store_true")
+    parser.add_argument("-root_dir", help="Get root directory of data",
+                        default="/data/cervix/patients", required=False)
+    parser.add_argument("-model_file", help="Get the file containing the model weights",
+                        default="final_model.pt", required=False)
+    parser.add_argument("-load_model", help="Get the model weights",
+                        default=False, required=False, action="store_true")
 
-    parser.add_argument("-lr", help="Learning Rate", default=0.0001, required=False, type=float)
-    parser.add_argument("-loss_func", help="Loss Function: BCE/NLL", default="BCE", required=False, type=str)
-    parser.add_argument("-mc_train", help="Only train using images with at least 2 classes", default=False, required=False, action="store_true")
+    parser.add_argument("-lr", help="Learning Rate",
+                        default=0.0001, required=False, type=float)
+    parser.add_argument("-loss_func", help="Loss Function: BCE/NLL",
+                        default="BCE", required=False, type=str)
+    parser.add_argument("-mc_train", help="Only train using images with at least 2 classes",
+                        default=False, required=False, action="store_true")
 
-    parser.add_argument("-max_iters", help="Maximum number of iterations", default=10, required=False, type=int)
-    parser.add_argument("-print_every", help="Print every X iterations", default=10, required=False, type=int)
-    parser.add_argument("-save_every", help="Save model every X epochs", default=1, required=False, type=int)
-    parser.add_argument("-eval_every", help="Evaluate model every X epochs using validation set", default=1, required=False, type=int)
-    
+    parser.add_argument("-max_iters", help="Maximum number of iterations",
+                        default=10, required=False, type=int)
+    parser.add_argument("-print_every", help="Print every X iterations",
+                        default=10, required=False, type=int)
+    parser.add_argument("-save_every", help="Save model every X epochs",
+                        default=1, required=False, type=int)
+    parser.add_argument("-eval_every", help="Evaluate model every X epochs using validation set",
+                        default=1, required=False, type=int)
+
     args = parser.parse_args()
 
     return args
+
 
 if __name__ == "__main__":
     args = parse_args()
     main(args)
 
 # python train.py -max_iters 100 -save_every 10 -mc_train
-# Train on all 10 patient CT images. 
+# Train on all 10 patient CT images.

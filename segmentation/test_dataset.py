@@ -11,14 +11,12 @@ from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 
 import argparse
-import pickle 
+import pickle
 import torch
 import os
 
 
 def train(args):
-    patients = os.listdir(args.root_dir)
-
     image_shapes = pickle.load(open("extra_CT_shapes.p", 'rb'))
     ds = CervixDataset(args.root_dir, image_shapes)
     dl = DataLoader(ds, batch_size=1, shuffle=False)
@@ -31,11 +29,11 @@ def train(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Get data shapes')
 
-    parser.add_argument("-root_dir", help="Get root directory of data", default="/data/cervix/patients", required=False)
-    
+    parser.add_argument("-root_dir", help="Get root directory of data",
+                        default="/data/cervix/patients", required=False)
+
     args = parser.parse_args()
 
     print(args)
 
     train(args)
-

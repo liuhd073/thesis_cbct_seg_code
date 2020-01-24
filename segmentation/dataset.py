@@ -18,7 +18,7 @@ class CervixDataset(Dataset):
         self.CTs = defaultdict(list)
         self.root_dir = root_dir
         self.patients = list(image_shapes.keys())
-        if self.conebeam:            
+        if self.conebeam:
             self.get_CBCTs()
         else:
             self.get_CTs()
@@ -30,14 +30,14 @@ class CervixDataset(Dataset):
             np.random.shuffle(self.patients)
         self.image_shapes = image_shapes
         self.patient_idx = 0
-        self.total = 0 # count for the sum of slices in _previous_ images (so don't count the current)
+        # count for the sum of slices in _previous_ images (so don't count the current)
+        self.total = 0
         if self.conebeam:
             self.n_current_slices = self.image_shapes[self.patients[self.patient_idx]][-2]
-        else:    
+        else:
             self.n_current_slices = self.image_shapes[self.patients[self.patient_idx]][-3]
         self.image, self.segmentation = self._load_image(self.patient_idx)
         self._update_random_list()
-        
 
     def __len__(self):
         if self.conebeam:
@@ -50,18 +50,21 @@ class CervixDataset(Dataset):
             for img in imgs:
                 m = re.search("CT[0-9]+", img)
                 n = m.group(0).lower()
-                segmentations = glob.glob(os.path.join(self.root_dir, patient, "*_{}.nii".format(n)))
+                segmentations = glob.glob(os.path.join(
+                    self.root_dir, patient, "*_{}.nii".format(n)))
                 if len(segmentations) > 0:
                     self.CTs[patient].append((img, segmentations))
 
     def get_CBCTs(self):
         for patient in self.patients:
             p = patient.split("\\")
-            images = glob.glob(os.path.join(self.root_dir, p[0], p[1] + ".nii"))
+            images = glob.glob(os.path.join(
+                self.root_dir, p[0], p[1] + ".nii"))
             for cbct in images:
                 m = re.search("X[0-9]+", cbct)
                 n = m.group(0).lower()
-                segmentations = glob.glob(os.path.join(self.root_dir, patient[:-4], "*_{}.nii".format(n)))
+                segmentations = glob.glob(os.path.join(
+                    self.root_dir, patient[:-4], "*_{}.nii".format(n)))
                 if len(segmentations) > 0:
                     self.CBCTs[patient].append((cbct, segmentations))
 
@@ -73,7 +76,7 @@ class CervixDataset(Dataset):
             segs.append(Y)
             if all_segs is None:
                 all_segs = Y.copy()
-            else: 
+            else:
                 all_segs += Y
 
         other = all_segs < 1
@@ -92,7 +95,8 @@ class CervixDataset(Dataset):
         print('loading', image_path)
 
         image = read_image(image_path, no_meta=True)
-        assert image.shape == segmentation.shape[1:], "image and segmentation should be of same shape in dataset!"
+        assert image.shape == segmentation.shape[1:
+                                                 ], "image and segmentation should be of same shape in dataset!"
         if len(image.shape) == 3:
             # add "channels" dimension if it is not present
             image = np.expand_dims(image, axis=0)
@@ -113,7 +117,7 @@ class CervixDataset(Dataset):
             self.patient_idx = 0
             if self.conebeam:
                 self.n_current_slices = self.image_shapes[self.patients[self.patient_idx]][-2]
-            else:    
+            else:
                 self.n_current_slices = self.image_shapes[self.patients[self.patient_idx]][-3]
             self.image, self.segmentation = self._load_image(self.patient_idx)
             if self.shuffle:
@@ -122,11 +126,11 @@ class CervixDataset(Dataset):
         if i - self.total == self.n_current_slices:
             # update image and segmentation
             self.total += self.n_current_slices
-            
+
             self.patient_idx += 1
             if self.conebeam:
                 self.n_current_slices = self.image_shapes[self.patients[self.patient_idx]][-2]
-            else:    
+            else:
                 self.n_current_slices = self.image_shapes[self.patients[self.patient_idx]][-3]
             self.image, self.segmentation = self._load_image(self.patient_idx)
             if self.shuffle:
@@ -135,15 +139,15 @@ class CervixDataset(Dataset):
         slice_idx = i - self.total
         if self.shuffle:
             slice_idx = self.random_order[slice_idx]
-        im_slice = crop_to_bbox(self.image, (0, slice_idx-10, 0, 0, 1, 21, 512, 512))
+        im_slice = crop_to_bbox(
+            self.image, (0, slice_idx-10, 0, 0, 1, 21, 512, 512))
         seg_slice = self.segmentation[:, slice_idx:slice_idx+1, :, :]
 
         if self.conebeam:
-            seg_slice = crop_to_bbox(seg_slice, (0, slice_idx, 0, 0, 3, 1, 512, 512))
+            seg_slice = crop_to_bbox(
+                seg_slice, (0, slice_idx, 0, 0, 3, 1, 512, 512))
 
         if self.transform:
-            imslice = self.transform(im_slice)
+            im_slice = self.transform(im_slice)
 
         return im_slice, seg_slice
-
-    

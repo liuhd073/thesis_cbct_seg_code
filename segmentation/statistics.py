@@ -15,5 +15,5 @@ for f in files:
     norm_means.append(statistics[f]["norm_mean"])
     mins.append(statistics[f]["min"])
     maxs.append(statistics[f]["max"])
-    
+
 print(np.mean(means), np.mean(norm_means), np.min(mins), np.max(maxs))

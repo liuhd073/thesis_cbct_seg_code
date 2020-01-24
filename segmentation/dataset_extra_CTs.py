@@ -25,15 +25,14 @@ class CervixDataset(Dataset):
             np.random.shuffle(self.patients)
         self.image_shapes = image_shapes
         self.patient_idx = 0
-        self.total = 0 # count for the sum of slices in _previous_ images (so don't count the current)
+        # count for the sum of slices in _previous_ images (so don't count the current)
+        self.total = 0
         self.n_current_slices = self.image_shapes[self.patients[self.patient_idx]][-3]
         self.image, self.segmentation = self._load_image(self.patient_idx)
         self._update_random_list()
-        
 
     def __len__(self):
         return sum([shape[-3] for shape in self.image_shapes.values()])
-
 
     def get_CTs(self):
         for patient in self.patients:
@@ -44,7 +43,6 @@ class CervixDataset(Dataset):
             seg_uterus = os.path.join(path, "CT-Uterus_full.nrrd")
             segmentations = [seg_bladder, seg_cervix, seg_uterus]
             self.CTs[patient].append((img, segmentations))
-
 
     def _get_segmentation(self, segmentations):
         seg_bladder = read_image(segmentations[0], no_meta=True).copy()
@@ -57,7 +55,6 @@ class CervixDataset(Dataset):
         segmentation = np.stack(segs).astype(int)
         return segmentation
 
-
     def _load_image(self, patient_idx):
         patient = self.patients[patient_idx]
         images = self.CTs[patient]
@@ -66,7 +63,8 @@ class CervixDataset(Dataset):
         print('loading', image_path)
 
         image = read_image(image_path, no_meta=True)
-        assert image.shape == segmentation.shape[1:], "image and segmentation should be of same shape in dataset!"
+        assert image.shape == segmentation.shape[1:
+                                                 ], "image and segmentation should be of same shape in dataset!"
         if len(image.shape) == 3:
             # add "channels" dimension if it is not present
             image = np.expand_dims(image, axis=0)
@@ -74,11 +72,9 @@ class CervixDataset(Dataset):
         image = (image - image.min()) / image.max()
         return image, segmentation
 
-
     def _update_random_list(self):
         self.random_order = list(range(self.n_current_slices))
         np.random.shuffle(self.random_order)
-
 
     def __getitem__(self, i):
         if i == 0:
@@ -92,7 +88,7 @@ class CervixDataset(Dataset):
         if i - self.total == self.n_current_slices:
             # update image and segmentation
             self.total += self.n_current_slices
-            
+
             self.patient_idx += 1
             self.n_current_slices = self.image_shapes[self.patients[self.patient_idx]][-3]
             self.image, self.segmentation = self._load_image(self.patient_idx)
@@ -102,12 +98,11 @@ class CervixDataset(Dataset):
         slice_idx = i - self.total
         if self.shuffle:
             slice_idx = self.random_order[slice_idx]
-        im_slice = crop_to_bbox(self.image, (0, slice_idx-10, 0, 0, 1, 21, 512, 512))
+        im_slice = crop_to_bbox(
+            self.image, (0, slice_idx-10, 0, 0, 1, 21, 512, 512))
         seg_slice = self.segmentation[:, slice_idx:slice_idx+1, :, :]
 
         if self.transform:
-            imslice = self.transform(im_slice)
+            im_slice = self.transform(im_slice)
 
         return im_slice, seg_slice
-
-    
