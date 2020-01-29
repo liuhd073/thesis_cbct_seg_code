@@ -11,7 +11,7 @@ import re
 
 
 class CervixDataset(Dataset):
-    def __init__(self, root_dir, image_shapes, transform=None, conebeams=True, shuffle=False):
+    def __init__(self, root_dir, image_shapes, transform=None, conebeams=False, shuffle=False):
         super(CervixDataset, self).__init__()
         self.conebeam = conebeams
         self.CBCTs = defaultdict(list)
@@ -36,7 +36,7 @@ class CervixDataset(Dataset):
             self.n_current_slices = self.image_shapes[self.patients[self.patient_idx]][-2]
         else:
             self.n_current_slices = self.image_shapes[self.patients[self.patient_idx]][-3]
-        self.image, self.segmentation = self._load_image(self.patient_idx)
+        # self.image, self.segmentation = self._load_image(self.patient_idx)
         self._update_random_list()
 
     def __len__(self):
@@ -54,6 +54,8 @@ class CervixDataset(Dataset):
                     self.root_dir, patient, "*_{}.nii".format(n)))
                 if len(segmentations) > 0:
                     self.CTs[patient].append((img, segmentations))
+        print("CTs loaded")
+
 
     def get_CBCTs(self):
         for patient in self.patients:

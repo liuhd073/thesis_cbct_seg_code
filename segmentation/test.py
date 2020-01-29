@@ -4,6 +4,7 @@ import os
 import torch
 import argparse
 import matplotlib.pyplot as plt
+import torchvision.transforms as transforms
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn import functional as F
 import torch.nn as nn
@@ -11,7 +12,8 @@ from utils.image_readers import read_image
 from utils.image_writers import write_image
 from resblockunet import ResBlockUnet
 from torch.utils.data import DataLoader
-from dataset_extra_CTs import CervixDataset
+from preprocess import Clip, NormalizeHV
+from dataset_extra_CTs import ExtraCervixDataset
 
 
 def train(args):
@@ -24,7 +26,8 @@ def train(args):
     print(cbct, type(cbct))
     image_shapes_0 = {cbct: image_shapes[cbct]}
 
-    ds = CervixDataset(args.root_dir, image_shapes_0)
+    transform = transforms.Compose([Clip(), NormalizeHV()])
+    ds = ExtraCervixDataset(args.root_dir, image_shapes_0, transform=transform)
     dl = DataLoader(ds, batch_size=1, shuffle=False)
 
     writer = SummaryWriter()
@@ -48,7 +51,7 @@ def train(args):
     criterion = nn.BCEWithLogitsLoss()
     softmax = nn.Sigmoid()
 
-    print("Start Training...")
+    print("Start Testing...")
     img_losses = []
 
     segmentations = {0: [], 1: []}

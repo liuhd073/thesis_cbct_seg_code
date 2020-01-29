@@ -10,9 +10,9 @@ import glob
 import re
 
 
-class CervixDataset(Dataset):
+class ExtraCervixDataset(Dataset):
     def __init__(self, root_dir, image_shapes, transform=None, shuffle=False):
-        super(CervixDataset, self).__init__()
+        super(ExtraCervixDataset, self).__init__()
         self.CTs = defaultdict(list)
         self.root_dir = root_dir
         self.patients = list(image_shapes.keys())
@@ -28,7 +28,7 @@ class CervixDataset(Dataset):
         # count for the sum of slices in _previous_ images (so don't count the current)
         self.total = 0
         self.n_current_slices = self.image_shapes[self.patients[self.patient_idx]][-3]
-        self.image, self.segmentation = self._load_image(self.patient_idx)
+        # self.image, self.segmentation = self._load_image(self.patient_idx)
         self._update_random_list()
 
     def __len__(self):
@@ -36,13 +36,21 @@ class CervixDataset(Dataset):
 
     def get_CTs(self):
         for patient in self.patients:
-            path = os.path.join(self.root_dir, patient, "full")
+            path = os.path.join(self.root_dir, patient)
             img = os.path.join(path, "CT.nrrd")
-            seg_bladder = os.path.join(path, "CT-Bladder_full.nrrd")
-            seg_cervix = os.path.join(path, "CT-Cervix_full.nrrd")
-            seg_uterus = os.path.join(path, "CT-Uterus_full.nrrd")
+            if "/full/" in img:
+                seg_bladder = os.path.join(path, "CT-Bladder_full.nrrd")
+                seg_cervix = os.path.join(path, "CT-Cervix_full.nrrd")
+                seg_uterus = os.path.join(path, "CT-Uterus_full.nrrd")
+            else:
+                seg_bladder = os.path.join(path, "CT-Bladder_empty.nrrd")
+                seg_cervix = os.path.join(path, "CT-Cervix_empty.nrrd")
+                seg_uterus = os.path.join(path, "CT-Uterus_empty.nrrd")
+
             segmentations = [seg_bladder, seg_cervix, seg_uterus]
             self.CTs[patient].append((img, segmentations))
+        print("CTs loaded")
+
 
     def _get_segmentation(self, segmentations):
         seg_bladder = read_image(segmentations[0], no_meta=True).copy()
@@ -63,13 +71,11 @@ class CervixDataset(Dataset):
         print('loading', image_path)
 
         image = read_image(image_path, no_meta=True)
-        assert image.shape == segmentation.shape[1:
-                                                 ], "image and segmentation should be of same shape in dataset!"
+        assert image.shape == segmentation.shape[1:], "image and segmentation should be of same shape in dataset!"
         if len(image.shape) == 3:
             # add "channels" dimension if it is not present
             image = np.expand_dims(image, axis=0)
 
-        image = (image - image.min()) / image.max()
         return image, segmentation
 
     def _update_random_list(self):

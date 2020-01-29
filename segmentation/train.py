@@ -11,9 +11,9 @@ import torch.nn as nn
 from torch.optim import Adam
 from resblockunet import ResBlockUnet
 from torch.utils.data import DataLoader
+from dataset_extra_CTs import ExtraCervixDataset
+from dataset import CervixDataset
 from preprocess import Clip, NormalizeHV
-from dataset_extra_CTs import CervixDataset
-print(__name__)
 
 # from dataset import CervixDataset
 
@@ -37,27 +37,52 @@ def get_model(args, device):
     return model
 
 
-def evaluate(dl_val, model, device, criterion, writer, j):
+def evaluate(dl_val, model, device, criterion, j):
     dataset_mean = 0.7
     losses = []
     model.eval()
+    softmax = nn.LogSoftmax(1)
 
     for (X, Y) in dl_val:
         X, Y = X.to(device).float(), Y.to(device).float()
         X = X - dataset_mean
         torch.cuda.empty_cache()
         Y_hat = model(X)
+        if args.loss_func == "NLL":
+            Y_hat = softmax(Y_hat)
+            Y = Y.argmax(1)
         loss = criterion(Y_hat, Y)
+
+        if args.save_imgs:
+            writer.add_image(
+                "images_true/0", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+            writer.add_image(
+                "images_true/1", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+            writer.add_image(
+                "images_true/2", Y[:, 2, :, :, :].squeeze(), i, dataformats="HW")
+            writer.add_image(
+                "images_true/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
+
+            Y_hat = softmax(Y_hat)
+
+            writer.add_image(
+                "images/0", Y_hat[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+            writer.add_image(
+                "images/1", Y_hat[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+            writer.add_image(
+                "images/2", Y_hat[:, 2, :, :, :].squeeze(), i, dataformats="HW")
+            writer.add_image(
+                "images/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
+
 
         losses.append(loss.item())
         torch.cuda.empty_cache()
 
     loss = np.mean(losses)
-    writer.add_scalar("loss/validation", loss, j)
     return loss
 
 
-def train(model, dl, optimizer, criterion, args, writer, device, j):
+def train(model, dl, optimizer, criterion, args, writer, device, j, start):
     dataset_mean = 0.7
     losses = []
     tmp_losses = []
@@ -73,6 +98,16 @@ def train(model, dl, optimizer, criterion, args, writer, device, j):
 
         Y_hat = model(X)
         assert Y_hat.shape == Y.shape, "output and classification must be same shape"
+        if args.save_imgs:
+            writer.add_image(
+                "images_true/0", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+            writer.add_image(
+                "images_true/1", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+            writer.add_image(
+                "images_true/2", Y[:, 2, :, :, :].squeeze(), i, dataformats="HW")
+            writer.add_image(
+                "images_true/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
+
         if args.loss_func == "NLL":
             Y_hat = softmax(Y_hat)
             Y = Y.argmax(1)
@@ -80,19 +115,30 @@ def train(model, dl, optimizer, criterion, args, writer, device, j):
 
         losses.append(loss.item())
         tmp_losses.append(loss.item())
-        writer.add_scalar("loss/train", loss.item(), j * len(dl) + i)
+        writer.add_scalar("loss/train", loss.item(), start + i)
+
+        if args.save_imgs:
+            writer.add_image(
+                "images/0", Y_hat[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+            writer.add_image(
+                "images/1", Y_hat[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+            writer.add_image(
+                "images/2", Y_hat[:, 2, :, :, :].squeeze(), i, dataformats="HW")
+            writer.add_image(
+                "images/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
 
         torch.cuda.empty_cache()
 
         if (j * len(dl) + i) % args.print_every == 0:
-            print("Iteration: {}/{} Loss: {}".format(j * len(dl) +
-                                                     i, len(dl) * args.max_iters, loss.item()))
+            print("Iteration: {}/{} Loss: {}".format(start +
+                                                     i, len(dl) * args.max_iters, sum(tmp_losses)/len(tmp_losses)))
+            tmp_losses = []
 
         # Train model
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-    avg_loss = sum(tmp_losses) / len(tmp_losses)
+    avg_loss = sum(losses) / len(losses)
 
     return avg_loss, losses
 
@@ -101,17 +147,29 @@ def main(args):
     device = "cuda"  # Run on GPU
 
     image_shapes = pickle.load(
-        open("extra_CT_shapes_train.p", 'rb'))  # training
+        open("CT_shapes_train.p", 'rb'))  # training
     image_shapes_val = pickle.load(
-        open("extra_CT_shapes_validation.p", 'rb'))  # validation
+        open("CT_shapes_validation.p", 'rb'))  # validation
 
     transform = transforms.Compose([Clip(), NormalizeHV()])
-    ds = CervixDataset(args.root_dir, image_shapes, transform=transform)
+    ds = CervixDataset(args.root_dir + "/patients", image_shapes, transform=transform)
     dl = DataLoader(ds, batch_size=1, shuffle=False)
 
     ds_val = CervixDataset(
-        args.root_dir, image_shapes_val, transform=transform)
+        args.root_dir + "/patients", image_shapes_val, transform=transform)
     dl_val = DataLoader(ds_val, batch_size=1, shuffle=False)
+
+    image_shapes2 = pickle.load(
+        open("extra_CT_shapes_train.p", 'rb'))  # training
+    image_shapes2_val = pickle.load(
+        open("extra_CT_shapes_validation.p", 'rb'))  # validation
+
+    ds2 = ExtraCervixDataset(args.root_dir + "/converted", image_shapes2, transform=transform)
+    dl2 = DataLoader(ds2, batch_size=1, shuffle=False)
+
+    ds2_val = ExtraCervixDataset(
+        args.root_dir + "/converted", image_shapes2_val, transform=transform)
+    dl2_val = DataLoader(ds2_val, batch_size=1, shuffle=False)
 
     writer = SummaryWriter()
 
@@ -123,48 +181,69 @@ def main(args):
     best_loss = float('inf')
     image_losses = []
     all_losses = []
+    eval_losses = []
+
+    if args.load_losses:
+        all_losses = pickle.load(open("losses.p", 'rb'))
+        image_losses = pickle.load(open("losses_mean.p", 'rb'))
+        eval_losses = pickle.load(open("losses_eval.p", 'rb'))
 
     print("Start Training...")
 
     for j in range(args.max_iters):
-        avg_loss, losses = train(model, dl, optimizer,
-                                 criterion, args, writer, device, j)
-        image_losses.append(avg_loss)
+        avg_loss1, losses = train(model, dl, optimizer,
+                                 criterion, args, writer, device, j, j * (len(dl) + len(dl2)))
         all_losses += losses
 
-        writer.add_scalar("loss/image", avg_loss, j)
-        if avg_loss < best_loss:
-            best_loss = avg_loss
-            torch.save(model.state_dict(), "best_model.pt")
-            print("Best model saved")
+        avg_loss2, losses = train(model, dl2, optimizer,
+                                 criterion, args, writer, device, j, j * (len(dl) + len(dl2)) + len(dl))
+        all_losses += losses
 
-        print("Iteration: {}/{} Average Loss: {}".format((j + 1)
-                                                         * len(dl), len(dl) * args.max_iters, avg_loss))
+        image_losses.append((avg_loss1 + avg_loss2) / 2)
+        writer.add_scalar("loss/mean", (avg_loss1 + avg_loss2) / 2, j)
+        
+
+        print("Iteration: {}/{} Average Loss: {}".format((j + 1) * (len(dl) + len(dl2)),
+                                                         len(dl) * args.max_iters, (avg_loss1 + avg_loss2) / 2))
 
         if j % args.save_every == 0:
             # Save Model
-            torch.save(model.state_dict(), "model_{}.pt".format(j))
-            print("Model saved in model_{}.pt".format(j))
+            torch.save(model.state_dict(), "model_{}_{}.pt".format(j, args.loss_func))
+            print("Model saved in model_{}_{}.pt".format(j, args.loss_func))
 
         if j % args.eval_every == 0:
-            eval_loss = evaluate(dl_val, model, device, criterion, writer, j)
+            eval_loss1 = evaluate(dl_val, model, device, criterion, j)
+            eval_loss2 = evaluate(dl2_val, model, device, criterion, j)
+            eval_loss = (eval_loss1 + eval_loss2)/2
+            writer.add_scalar("loss/validation", eval_loss, j)
             print("Epoch: {}/{} Validation Loss: {}".format(j,
                                                             args.max_iters, eval_loss))
+            if eval_loss < best_loss:
+                best_loss = eval_loss
+                torch.save(model.state_dict(), "best_model_{}.pt".format(args.loss_func))
+                print("Best model saved: best_model_{}.pt".format(args.loss_func))
+            eval_losses.append(eval_loss)
+
+        pickle.dump(all_losses, open("losses.p", 'wb'))
+        pickle.dump(image_losses, open("losses_mean.p", 'wb'))
+        pickle.dump(eval_losses, open("losses_eval.p", 'wb'))
 
     print("End training, save final model...")
     torch.save(model.state_dict(), "final_model.pt")
-    pickle.dump(all_losses, open("losses.p", 'wb'))
-    pickle.dump(image_losses, open("avg_losses.p", 'wb'))
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Get data shapes')
 
     parser.add_argument("-root_dir", help="Get root directory of data",
-                        default="/data/cervix/patients", required=False)
+                        default="/data/cervix", required=False)
     parser.add_argument("-model_file", help="Get the file containing the model weights",
                         default="final_model.pt", required=False)
     parser.add_argument("-load_model", help="Get the model weights",
+                        default=False, required=False, action="store_true")
+    parser.add_argument("-load_losses", help="Get the model weights",
+                        default=False, required=False, action="store_true")
+    parser.add_argument("-save_imgs", help="Save the training images to tensorboard",
                         default=False, required=False, action="store_true")
 
     parser.add_argument("-lr", help="Learning Rate",

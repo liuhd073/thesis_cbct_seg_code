@@ -10,6 +10,7 @@ def main(args):
 
     patients_CT_train = patients[:int(args.ratio*len(patients))]
     patients_CT_val = patients[int(args.ratio*len(patients)):]
+    print(patients_CT_val)
 
     image_shapes_CT_train = {p: image_shapes_CT[p] for p in patients_CT_train}
     image_shapes_CT_val = {p: image_shapes_CT[p] for p in patients_CT_val}
