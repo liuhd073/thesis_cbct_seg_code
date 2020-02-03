@@ -22,7 +22,7 @@ def get_loss_func(loss_func="BCE"):
     if loss_func == "BCE":
         return nn.BCEWithLogitsLoss()
     if loss_func == "NLL":
-        weights = torch.Tensor([1, 1, 0.0001]).to("cuda")
+        weights = torch.Tensor([1, 1, 0.1]).to("cuda")
         return nn.NLLLoss(weight=weights)
 
 
@@ -53,28 +53,6 @@ def evaluate(dl_val, model, device, criterion, j):
             Y = Y.argmax(1)
         loss = criterion(Y_hat, Y)
 
-        if args.save_imgs:
-            writer.add_image(
-                "images_true/0", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
-            writer.add_image(
-                "images_true/1", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
-            writer.add_image(
-                "images_true/2", Y[:, 2, :, :, :].squeeze(), i, dataformats="HW")
-            writer.add_image(
-                "images_true/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
-
-            Y_hat = softmax(Y_hat)
-
-            writer.add_image(
-                "images/0", Y_hat[:, 0, :, :, :].squeeze(), i, dataformats="HW")
-            writer.add_image(
-                "images/1", Y_hat[:, 1, :, :, :].squeeze(), i, dataformats="HW")
-            writer.add_image(
-                "images/2", Y_hat[:, 2, :, :, :].squeeze(), i, dataformats="HW")
-            writer.add_image(
-                "images/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
-
-
         losses.append(loss.item())
         torch.cuda.empty_cache()
 
@@ -83,20 +61,21 @@ def evaluate(dl_val, model, device, criterion, j):
 
 
 def train(model, dl, optimizer, criterion, args, writer, device, j, start):
-    dataset_mean = 0.7
+    dataset_mean = 0.1
     losses = []
     tmp_losses = []
     softmax = nn.LogSoftmax(1)
+
     for i, (X, Y) in enumerate(dl):
         model.train()
         X, Y = X.to(device).float(), Y.to(device).float()
-        X = X - dataset_mean
+        # X = X - dataset_mean
 
         if args.mc_train:
             if len(Y.argmax(1).unique()) < 2:
                 continue
 
-        Y_hat = model(X)
+        Y_hat = model(X - dataset_mean)
         assert Y_hat.shape == Y.shape, "output and classification must be same shape"
         if args.save_imgs:
             writer.add_image(
@@ -119,11 +98,11 @@ def train(model, dl, optimizer, criterion, args, writer, device, j, start):
 
         if args.save_imgs:
             writer.add_image(
-                "images/0", Y_hat[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+                "images/0", Y_hat.exp()[:, 0, :, :, :].squeeze(), i, dataformats="HW")
             writer.add_image(
-                "images/1", Y_hat[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+                "images/1", Y_hat.exp()[:, 1, :, :, :].squeeze(), i, dataformats="HW")
             writer.add_image(
-                "images/2", Y_hat[:, 2, :, :, :].squeeze(), i, dataformats="HW")
+                "images/2", Y_hat.exp()[:, 2, :, :, :].squeeze(), i, dataformats="HW")
             writer.add_image(
                 "images/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
 
@@ -229,6 +208,7 @@ def main(args):
         pickle.dump(eval_losses, open("losses_eval.p", 'wb'))
 
     print("End training, save final model...")
+    writer.flush()
     torch.save(model.state_dict(), "final_model.pt")
 
 
