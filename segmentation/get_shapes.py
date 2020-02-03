@@ -29,7 +29,12 @@ def get_shapes_extra(root_dir):
             img = read_image(os.path.join(root_dir, patient,
                                           "full", "CT.nrrd"), no_meta=True)
             print(patient, img.shape)
-            shapes[patient] = img.shape
+            shapes[patient + "/full"] = img.shape
+            
+            img2 = read_image(os.path.join(root_dir, patient,
+                                          "empty", "CT.nrrd"), no_meta=True)
+            print(patient, img2.shape)
+            shapes[patient + "/empty"] = img2.shape
         except:
             print(patient, "failed")
     return shapes
@@ -62,6 +67,8 @@ def main(args):
     elif args.extra_CT:
         print("parse extra CTs")
         shapes = get_shapes_extra(args.root_dir)
+        # shapes_2 = get_shapes(args.root_dir)
+        # shapes.update(shapes_2)
     else:
         print("parse CTs")
         shapes = get_shapes(args.root_dir)
