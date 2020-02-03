@@ -53,6 +53,11 @@ class CervixDataset(Dataset):
                 segmentations = glob.glob(os.path.join(
                     self.root_dir, patient, "*_{}.nii".format(n)))
                 if len(segmentations) > 0:
+                    seg_bladder = os.path.join(
+                        self.root_dir, patient, "bladder_{}.nii".format(n))
+                    seg_uterus = os.path.join(
+                        self.root_dir, patient, "cervix_uterus_{}.nii".format(n))
+                    segmentations = [seg_bladder, seg_uterus]
                     self.CTs[patient].append((img, segmentations))
         print("CTs loaded")
 
@@ -71,6 +76,7 @@ class CervixDataset(Dataset):
                     self.CBCTs[patient].append((cbct, segmentations))
 
     def _get_segmentation(self, segmentations):
+        seg_bladder = read_image(segmentations[0], no_meta=True)
         segs = []
         all_segs = None
         for seg in segmentations:
@@ -103,10 +109,11 @@ class CervixDataset(Dataset):
             # add "channels" dimension if it is not present
             image = np.expand_dims(image, axis=0)
 
-        image = (image - image.min()) / image.max()
         if self.conebeam:
             image = np.swapaxes(image, 1, 2)
             segmentation = np.swapaxes(segmentation, 1, 2)
+        else:
+            image -= 1000
         return image, segmentation
 
     def _update_random_list(self):
