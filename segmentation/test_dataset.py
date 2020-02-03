@@ -19,25 +19,39 @@ import os
 
 
 def train(args):
-    writer = SummaryWriter()
+    j=0
+    # writer = SummaryWriter()
     image_shapes = pickle.load(open("CT_shapes_validation.p", 'rb'))
     transform = transforms.Compose([Clip(), NormalizeHV()])
     ds = CervixDataset(args.root_dir, image_shapes, transform=transform)
     dl = DataLoader(ds, batch_size=1, shuffle=False)
 
-    for j in range(2):
-        for i, (X, Y) in enumerate(dl):
-            print("{} {}/{} X: {} Y: {}".format(j, i, len(dl), X.shape, Y.shape))
-            # writer.add_image(
-            #     "images_true/0", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
-            # writer.add_image(
-            #     "images_true/1", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
-            # writer.add_image(
-            #     "images_true/2", Y[:, 2, :, :, :].squeeze(), i, dataformats="HW")
-            # writer.add_image( 
-            #     "images_true/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
+    for i, (X, Y) in enumerate(dl):
+        print("{} {}/{} X: {} Y: {}".format(j, i, len(dl), X.shape, Y.shape))
+        # print(X.min(), X.max())
+        # writer.add_image(
+        #     "images_true/0", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+        # writer.add_image(
+        #     "images_true/1", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+        # writer.add_image(
+        #     "images_true/2", Y[:, 2, :, :, :].squeeze(), i, dataformats="HW")
+        # writer.add_image( 
+        #     "images_true/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
 
+    image_shapes = pickle.load(open("extra_CT_shapes_validation.p", 'rb'))
+    ds = ExtraCervixDataset("/data/cervix/converted", image_shapes, transform=transform)
+    dl = DataLoader(ds, batch_size=1, shuffle=False)
 
+    for i, (X, Y) in enumerate(dl):
+        print("{} {}/{} X: {} Y: {}".format(j, i, len(dl), X.shape, Y.shape))
+        # writer.add_image(
+        #     "images_true/0", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+        # writer.add_image(
+        #     "images_true/1", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+        # writer.add_image(
+        #     "images_true/2", Y[:, 2, :, :, :].squeeze(), i, dataformats="HW")
+        # writer.add_image( 
+        #     "images_true/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Get data shapes')
