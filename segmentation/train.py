@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 from dataset_extra_CTs import ExtraCervixDataset
 from dataset import CervixDataset
 from preprocess import Clip, NormalizeHV
+from utils.plotting import plot_2d
 
 # from dataset import CervixDataset
 
@@ -78,14 +79,23 @@ def train(model, dl, optimizer, criterion, args, writer, device, j, start):
         Y_hat = model(X - dataset_mean)
         assert Y_hat.shape == Y.shape, "output and classification must be same shape"
         if args.save_imgs:
+            img_arr = X[0,0,10,:,:].detach().cpu()
+            seg_arr_bladder = Y[:,0,:,:,:].squeeze().detach().cpu()
+            seg_arr_cervix = Y[:,1,:,:,:].squeeze().detach().cpu()
+            
             writer.add_image(
-                "images_true/0", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+                "images_true/bladder", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
             writer.add_image(
-                "images_true/1", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
-            writer.add_image(
-                "images_true/2", Y[:, 2, :, :, :].squeeze(), i, dataformats="HW")
-            writer.add_image(
-                "images_true/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
+                "images_true/cervix", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+
+            # writer.add_image(
+            #     "images_true/0", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+            # writer.add_image(
+            #     "images_true/1", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+            # writer.add_image(
+            #     "images_true/2", Y[:, 2, :, :, :].squeeze(), i, dataformats="HW")
+            # writer.add_image(
+            #     "images_true/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
 
         if args.loss_func == "NLL":
             Y_hat = softmax(Y_hat)
@@ -97,14 +107,35 @@ def train(model, dl, optimizer, criterion, args, writer, device, j, start):
         writer.add_scalar("loss/train", loss.item(), start + i)
 
         if args.save_imgs:
+            out_arr_bladder = Y_hat.exp()[:,0,:,:,:].squeeze().detach().cpu()
+            out_arr_cervix = Y_hat.exp()[:,1,:,:,:].squeeze().detach().cpu()
+
+            masked_img_bladder = np.array(plot_2d(img_arr, mask=out_arr_bladder, mask_color="r", mask_threshold=0.8))
+            masked_img_cervix = np.array(plot_2d(img_arr, mask=out_arr_cervix, mask_color="r", mask_threshold=0.8))
+
+            masked_img_bladder = torch.from_numpy(np.array(plot_2d(masked_img_bladder, mask=seg_arr_bladder, mask_color="g")))
+            masked_img_cervix = torch.from_numpy(np.array(plot_2d(masked_img_cervix, mask=seg_arr_cervix, mask_color="g")))
+
             writer.add_image(
-                "images/0", Y_hat.exp()[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+                "images_true/mask_bladder", masked_img_bladder, i, dataformats="HWC")
             writer.add_image(
-                "images/1", Y_hat.exp()[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+                "images_true/mask_cervix", masked_img_cervix, i, dataformats="HWC")
+
             writer.add_image(
-                "images/2", Y_hat.exp()[:, 2, :, :, :].squeeze(), i, dataformats="HW")
+                "images/bladder", Y_hat.exp()[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+            writer.add_image(
+                "images/cervix", Y_hat.exp()[:, 1, :, :, :].squeeze(), i, dataformats="HW")
             writer.add_image(
                 "images/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
+
+            # writer.add_image(
+            #     "images/0", Y_hat.exp()[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+            # writer.add_image(
+            #     "images/1", Y_hat.exp()[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+            # writer.add_image(
+            #     "images/2", Y_hat.exp()[:, 2, :, :, :].squeeze(), i, dataformats="HW")
+            # writer.add_image(
+            #     "images/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
 
         torch.cuda.empty_cache()
 
