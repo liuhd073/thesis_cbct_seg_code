@@ -96,11 +96,11 @@ def test(args, dl, writer, model, image_shapes):
         out_arr_bladder = Y_hat[:,0,:,:,:].squeeze().detach().cpu()
         out_arr_cervix = Y_hat[:,1,:,:,:].squeeze().detach().cpu()
 
-        masked_img_bladder = np.array(plot_2d(img_arr, mask=out_arr_bladder, mask_color="r"))
-        masked_img_cervix = np.array(plot_2d(img_arr, mask=out_arr_cervix, mask_color="r"))
+        masked_img_bladder = np.array(plot_2d(img_arr, mask=out_arr_bladder, mask_color="r", mask_threshold=0.8))
+        masked_img_cervix = np.array(plot_2d(img_arr, mask=out_arr_cervix, mask_color="r", mask_threshold=0.8))
 
-        masked_img_bladder = torch.from_numpy(np.array(plot_2d(masked_img_bladder, mask=seg_arr_bladder, mask_color="g", mask_threshold=0.8)))
-        masked_img_cervix = torch.from_numpy(np.array(plot_2d(masked_img_cervix, mask=seg_arr_cervix, mask_color="g", mask_threshold=0.8)))
+        masked_img_bladder = torch.from_numpy(np.array(plot_2d(masked_img_bladder, mask=seg_arr_bladder, mask_color="g")))
+        masked_img_cervix = torch.from_numpy(np.array(plot_2d(masked_img_cervix, mask=seg_arr_cervix, mask_color="g")))
 
         writer.add_image(
             "images_true/0", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
