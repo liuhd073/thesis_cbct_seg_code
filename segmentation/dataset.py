@@ -29,13 +29,14 @@ class CTDataset(Dataset):
 
     def _get_segmentation(self, segmentations):
         if len(segmentations) == 2:
-            seg_bladder = read_image(segmentations[0], no_meta=True, spacing=(0.9765625, 0.9765625, 5))
-            seg_cervix_uterus = read_image(segmentations[1], no_meta=True, spacing=(0.9765625, 0.9765625, 5))
+            seg_bladder = read_image(segmentations[0], no_meta=True, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
+            seg_cervix_uterus = read_image(segmentations[1], no_meta=True, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
             all_segs = seg_bladder + seg_cervix_uterus
+        # Combine cervix and uterus segmentation
         elif len(segmentations) == 3:
-            seg_bladder = read_image(segmentations[0], no_meta=True, spacing=(0.9765625, 0.9765625, 5))
-            seg_cervix = read_image(segmentations[1], no_meta=True, spacing=(0.9765625, 0.9765625, 5))
-            seg_uterus = read_image(segmentations[2], no_meta=True, spacing=(0.9765625, 0.9765625, 5))
+            seg_bladder = read_image(segmentations[0], no_meta=True, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
+            seg_cervix = read_image(segmentations[1], no_meta=True, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
+            seg_uterus = read_image(segmentations[2], no_meta=True, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
             seg_cervix_uterus = (seg_cervix | seg_uterus)
             all_segs = seg_bladder + seg_cervix + seg_uterus
         other = all_segs < 1
@@ -46,6 +47,7 @@ class CTDataset(Dataset):
     def _load_image(self, patient):
         cache_fn = self.cachedir / f"{patient}_CT1"
         cache_fn_seg = self.cachedir / f"{patient}_CT1_seg"
+        # print("Loading:", cache_fn)
         if cache_fn.exists() and cache_fn_seg.exists():
             image = read_object(cache_fn)
             segmentation = read_object(cache_fn_seg)
@@ -63,6 +65,8 @@ class CTDataset(Dataset):
                 # add "channels" dimension if it is not present
                 image = np.expand_dims(image, axis=0)
                 # segmentation = np.expand_dims(segmentation, axis=0)
+            if self.transform:
+                image = self.transform(image)
             save_object(image, cache_fn)
             save_object(segmentation, cache_fn_seg)
 
@@ -86,15 +90,13 @@ class CTDataset(Dataset):
             self.image, self.segmentation = self._load_image(patient)
             self.current_patient = patient
 
-        im_slice = crop_to_bbox(self.image, (0, slice_idx - 10, 0, 0, 1, 21, 512, 512))
-        seg_slice = crop_to_bbox(self.segmentation, (0, slice_idx, 0, 0, 3, 1, 512, 512))
-        self.segmentation[:, slice_idx : slice_idx + 1, :, :]
+        start = int((self.image_shapes[patient][1] - 512) / 2)
+
+        im_slice = crop_to_bbox(self.image, (0, slice_idx - 10, start, start, 1, 21, 512, 512))
+        seg_slice = crop_to_bbox(self.segmentation, (0, slice_idx, start, start, 3, 1, 512, 512))
 
         assert (
             0 not in seg_slice.shape
         ), f"Segmentation slice has dimension of size 0: {seg_slice.shape}"
-
-        if self.transform:
-            im_slice = self.transform(im_slice)
 
         return im_slice, seg_slice
