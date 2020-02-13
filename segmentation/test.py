@@ -19,6 +19,22 @@ from dataset_extra_CTs import ExtraCervixDataset
 from dataset import CervixDataset
 
 
+def iou(ground_truth, segmentation, threshold=0.5, eps=1e-5):
+    segmentation = (segmentation > threshold)
+    ground_truth = (ground_truth > threshold)
+    intersect = (ground_truth & segmentation).sum().item()
+    union = (ground_truth | segmentation).sum().item()
+    return 1 - (intersect + eps) / (union + eps)
+
+
+def dice(ground_truth, segmentation, threshold=0.5, eps=1e-6):
+    segmentation = (segmentation > threshold)
+    ground_truth = (ground_truth > threshold)
+    intersect = (ground_truth & segmentation).sum().item()
+    union = (ground_truth | segmentation).sum().item()
+    return 1 - (2*intersect + eps) / (intersect + union + eps)
+
+
 def get_loss_func(loss_func="BCE"):
     if loss_func == "BCE":
         return nn.BCEWithLogitsLoss()
@@ -36,7 +52,7 @@ def test(args, dl, writer, model, image_shapes):
     print("Start Testing...")
     img_losses = []
 
-    segmentations = {0: [], 1: []}
+    segmentations = {0: [], 1: [], "y_bladder": [], "y_cervix": []}
 
     img_i = 0
     temp = image_shapes.pop(0)
@@ -59,17 +75,24 @@ def test(args, dl, writer, model, image_shapes):
             img_i = 0
             print("NEW IMAGE")
 
-            seg_bladder = torch.stack(segmentations[0]).detach().cpu().int()
-            seg_cervix_uterus = torch.stack(segmentations[1]).detach().cpu().int()
-
-            print(seg_bladder.shape)
-            print(seg_cervix_uterus.shape)
+            y_bladder = torch.stack(segmentations["y_bladder"])
+            y_cervix = torch.stack(segmentations["y_cervix"])
+            seg_bladder = torch.stack(segmentations[0]).int()
+            seg_cervix_uterus = torch.stack(segmentations[1]).int()
 
             write_image(seg_bladder, "testing/{}_seg_bladder.nrrd".format(patient.replace("/", "_")), metadata=metadata)
             write_image(seg_cervix_uterus,
                     "testing/{}_seg_cervix_uterus.nrrd".format(patient.replace("/", "_")), metadata=metadata)
 
-            segmentations = {0: [], 1: []}
+            print(y_bladder.shape, type(y_bladder), seg_bladder.shape, type(seg_bladder))
+            pickle.dump((y_bladder, seg_bladder), open("temp.p", 'wb'))
+
+            print("IoU bladder:", iou(y_bladder, seg_bladder, threshold=0.8))
+            print("IoU cervix/uterus:", iou(y_cervix, seg_cervix_uterus, threshold=0.8))
+            print("Dice bladder:", dice(y_bladder, seg_bladder, threshold=0.8))
+            print("Dice cervix/uterus:", dice(y_cervix, seg_cervix_uterus, threshold=0.8))
+
+            segmentations = {0: [], 1: [], "y_bladder": [], "y_cervix": []}
             temp = image_shapes.pop(0)
             img_shape = temp[1][0]
             patient = temp[0]
@@ -107,6 +130,9 @@ def test(args, dl, writer, model, image_shapes):
         writer.add_image(
             "images_true/1", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
 
+        segmentations["y_bladder"].append(Y[:, 0, :, :, :].squeeze().detach().cpu())
+        segmentations["y_cervix"].append(Y[:, 1, :, :, :].squeeze().detach().cpu())
+
         Y_hat = softmax(Y_hat)
         Y = Y.argmax(1)
 
@@ -130,9 +156,9 @@ def test(args, dl, writer, model, image_shapes):
 
 
         # image.append(X[:,:,10:11,:,:].squeeze().data)
-        segmentations[0].append(Y_hat.exp()[:, 0, :, :, :].squeeze().data > 0.8)
-        segmentations[1].append(Y_hat.exp()[:, 1, :, :, :].squeeze().data > 0.8)
-
+        segmentations[0].append(Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu() > 0.8)
+        segmentations[1].append(Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu() > 0.8)
+        
         torch.cuda.empty_cache()
 
         if (j * len(dl) + i) % args.print_every == 0:
