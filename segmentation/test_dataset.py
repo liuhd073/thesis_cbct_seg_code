@@ -24,10 +24,10 @@ import os
 def train(args):
     j=0
     writer = SummaryWriter()
-    files_train = pickle.load(open("files_test.p", 'rb'))
+    files_train = pickle.load(open("files_train.p", 'rb'))
     transform = transforms.Compose([Clip(), NormalizeHV()])
-    ds = CTDataset(files_train, transform=transform)
-    dl = DataLoader(ds, batch_size=1, shuffle=True)
+    ds = CTDataset(files_train, transform=transform, cachedir="/tmp")
+    dl = DataLoader(ds, batch_size=1, shuffle=False)
     seg_slices = 0
     no_seg_slices = 0
 
@@ -37,14 +37,17 @@ def train(args):
             no_seg_slices += 1
         else: 
             seg_slices += 1
+
+        print("Unique:", Y.argmax(1).unique())
     
-        print(X.min(), X.max())
         writer.add_image(
             "dataset_test/bladder", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
         writer.add_image(
             "dataset_test/cervix_uterus", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+        writer.add_image(
+            "dataset_test/other", Y[:, 2, :, :, :].squeeze(), i, dataformats="HW")
         writer.add_image( 
-            "dataset_test/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
+            "dataset_test/X", X[:, :, 4, :, :].squeeze(), i, dataformats="HW")
 
     print("Seg slices:", seg_slices)
     print("No seg slices:", no_seg_slices)

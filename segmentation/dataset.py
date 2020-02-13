@@ -39,6 +39,10 @@ class CTDataset(Dataset):
             seg_uterus = read_image(segmentations[2], no_meta=True, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
             seg_cervix_uterus = (seg_cervix | seg_uterus)
             all_segs = seg_bladder + seg_cervix + seg_uterus
+        start = int((all_segs.shape[1] - 512) / 2)
+        seg_bladder = crop_to_bbox(seg_bladder, (0, start, start, seg_bladder.shape[0], 512, 512))
+        seg_cervix_uterus = crop_to_bbox(seg_cervix_uterus, (0, start, start, seg_cervix_uterus.shape[0], 512, 512))
+        all_segs = crop_to_bbox(all_segs, (0, start, start, all_segs.shape[0], 512, 512))
         other = all_segs < 1
         segs = [seg_bladder, seg_cervix_uterus, other]
         segmentation = np.stack(segs).astype(int)
@@ -54,13 +58,15 @@ class CTDataset(Dataset):
         else:
             image_path, segmentation_paths = self.data[patient]
             image = read_image(image_path, no_meta=True, spacing=(0.9765625, 0.9765625, 5))
+            # print(image.shape)
+            # image = crop_to_bbox(image, (0, start, start, image.shape[0], 512, 512))
             if patient.isdigit():
                 image -= 1000
             segmentation = self._get_segmentation(segmentation_paths)
             
-            assert (
-                image.shape == segmentation.shape[1:]
-            ), "image and segmentation should be of same shape in dataset!"
+            # assert (
+            #     image.shape == segmentation.shape[1:]
+            # ), "image and segmentation should be of same shape in dataset!"
             if len(image.shape) == 3:
                 # add "channels" dimension if it is not present
                 image = np.expand_dims(image, axis=0)
@@ -92,8 +98,8 @@ class CTDataset(Dataset):
 
         start = int((self.image_shapes[patient][1] - 512) / 2)
 
-        im_slice = crop_to_bbox(self.image, (0, slice_idx - 10, start, start, 1, 21, 512, 512))
-        seg_slice = crop_to_bbox(self.segmentation, (0, slice_idx, start, start, 3, 1, 512, 512))
+        im_slice = crop_to_bbox(self.image, (0, slice_idx - 3, start, start, 1, 13, 512, 512))
+        seg_slice = crop_to_bbox(self.segmentation, (0, slice_idx, 0, 0, 3, 1, 512, 512))
 
         assert (
             0 not in seg_slice.shape
