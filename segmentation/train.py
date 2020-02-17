@@ -42,7 +42,8 @@ def get_model(args, device):
 
 
 def check_results_folder(args):
-    res_dir = Path(args.results_folder)
+    # res_dir = Path(args.results_folder)
+    res_dir = args.results_folder
     if not res_dir.exists():
         res_dir.mkdir()
 
@@ -221,8 +222,10 @@ def main(args):
     best_loss = float("inf")
 
     if args.load_losses:
-        all_losses = pickle.load(open("losses.p", 'rb'))
-        eval_losses = pickle.load(open("losses_val.p", 'rb'))
+        loss_fn = args.results_folder / "losses" / "losses.p"
+        all_losses = pickle.load(open(loss_fn, 'rb'))
+        loss_fn = args.results_folder / "losses" / "losses_val.p"
+        eval_losses = pickle.load(open(loss_fn, 'rb'))
         best_loss = np.min(eval_losses)
         
     losses = {"train": all_losses, "validation": eval_losses, "best": best_loss}
@@ -280,6 +283,8 @@ def parse_args():
                         default=1, required=False, type=int)
 
     args = parser.parse_args()
+
+    args.results_folder = Path(args.results_folder)
 
     return args
 
