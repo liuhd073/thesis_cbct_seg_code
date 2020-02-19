@@ -159,8 +159,8 @@ def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true
         torch.cuda.empty_cache()
 
         losses["train"].append(loss.detach().cpu().item())
-        tmp_losses.append(losses[-1])
-        writer.add_scalar("loss/train", losses[-1], true_i)
+        tmp_losses.append(losses["train"][-1])
+        writer.add_scalar("loss/train", losses["train"][-1], true_i)
 
         if args.save_imgs:
             _log_images(X, Y, Y_hat, true_i, writer, "train")
