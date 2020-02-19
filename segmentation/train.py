@@ -19,8 +19,6 @@ from utils.plotting import plot_2d
 from mini_model import UNetResBlocks  # , UNet
 import time
 
-# from dataset import CervixDataset
-
 
 def get_loss_func(loss_func="BCE"):
     if loss_func == "BCE":
@@ -107,17 +105,21 @@ def evaluate(dl_val, writer, model, device, criterion, j, max_iters=None):
         if args.mc_train:
             if len(Y.argmax(1).unique()) < 2:
                 continue
+
+        if args.equal_train:
+            if len(Y.argmax(1).unique()) < 2 and np.random.rand(1) > 0.25:
+                continue
         Y_hat = model(X)
         if args.loss_func == "NLL":
             Y_hat = softmax(Y_hat)
         loss = criterion(Y_hat, Y.argmax(1))
-        # topkloss, _ = torch.topk(loss.flatten(), int(0.1*loss.numel()))
-        # loss = topkloss.mean()
+        topkloss, _ = torch.topk(loss.flatten(), int(args.topk*loss.numel()))
+        loss = topkloss.mean()
 
         if args.save_imgs:
             _log_images(X, Y, Y_hat, i, writer, "validation")
 
-        losses.append(loss.item())
+        losses.append(loss.detach().cpu().item())
         torch.cuda.empty_cache()
         i += 1
 
@@ -147,18 +149,18 @@ def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true
         if args.loss_func == "NLL":
             Y_hat = softmax(Y_hat)
         loss = criterion(Y_hat, Y.argmax(1))
-        # topkloss, _ = torch.topk(loss.flatten(), int(0.1*loss.numel()))
-        # loss = topkloss.mean()
-
-        losses["train"].append(loss.item())
-        tmp_losses.append(loss.item())
-        writer.add_scalar("loss/train", loss.item(), true_i)
+        topkloss, _ = torch.topk(loss.flatten(), int(args.topk*loss.numel()))
+        loss = topkloss.mean()
         
         # Train model
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         torch.cuda.empty_cache()
+
+        losses["train"].append(loss.detach().cpu().item())
+        tmp_losses.append(losses[-1])
+        writer.add_scalar("loss/train", losses[-1], true_i)
 
         if args.save_imgs:
             _log_images(X, Y, Y_hat, true_i, writer, "train")
@@ -210,8 +212,8 @@ def main(args):
 
     writer = SummaryWriter()
 
-    # model = UNetResBlocks().to(device)
-    model = get_model(args, device)
+    model = UNetResBlocks().to(device)
+    # model = get_model(args, device)
     print("Model Loaded")
     optimizer = Adam(model.parameters(), lr=args.lr)
 
@@ -264,9 +266,13 @@ def parse_args():
 
     parser.add_argument("-lr", help="Learning Rate",
                         default=0.0001, required=False, type=float)
+    parser.add_argument("-topk", help="Top K Loss",
+                        default=1.0, required=False, type=float)
     parser.add_argument("-loss_func", help="Loss Function: BCE/NLL",
                         default="BCE", required=False, type=str)
     parser.add_argument("-mc_train", help="Only train using images with at least 2 classes",
+                        default=False, required=False, action="store_true")
+    parser.add_argument("-equal_train", help="Only train using images with at least 2 classes",
                         default=False, required=False, action="store_true")
     parser.add_argument("-use_group_norm", help="Implement group norm in model",
                         default=False, required=False, action="store_true")
