@@ -25,7 +25,10 @@ def get_loss_func(loss_func="BCE"):
         return nn.BCEWithLogitsLoss()
     if loss_func == "NLL":
         weights = torch.Tensor([1, 1, 0.1]).to("cuda")
-        return nn.NLLLoss(weight=weights)  # , reduction="none"
+        if args.topk < 1.0:
+            return nn.NLLLoss(weight=weights, reduction="none")
+        else:
+            return nn.NLLLoss(weight=weights)
 
 
 def get_model(args, device):
@@ -58,7 +61,8 @@ def check_results_folder(args):
 
 
 def _log_images(X, Y, Y_hat, i, writer, tag="train"):
-    img_arr = X[0, 0, 3, :, :].detach().cpu()
+    middle_slice = X.shape[2] // 2
+    img_arr = X[0, 0, middle_slice, :, :].detach().cpu()
     seg_arr_bladder = Y[:, 0, :, :, :].squeeze().detach().cpu()
     seg_arr_cervix = Y[:, 1, :, :, :].squeeze().detach().cpu()
 
@@ -134,12 +138,15 @@ def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true
     tmp_losses = []
     best_loss = float("inf")
 
-    for (X, Y) in dl:
+    for i, (X, Y) in enumerate(dl):
         model.train()
         X, Y = X.to(device).float(), Y.to(device).float()
 
         if args.mc_train:
             if len(Y.argmax(1).unique()) < 2:
+                continue
+        if args.equal_train:
+            if len(Y.argmax(1).unique()) < 2 and np.random.rand(1) > 0.25:
                 continue
 
         Y_hat = model(X - dataset_mean)
@@ -162,8 +169,6 @@ def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true
         tmp_losses.append(losses["train"][-1])
         writer.add_scalar("loss/train", losses["train"][-1], true_i)
 
-        if args.save_imgs:
-            _log_images(X, Y, Y_hat, true_i, writer, "train")
 
         if true_i % args.eval_every == 0:
             eval_loss = evaluate(dl_val, writer, model, device, criterion, j)
@@ -179,8 +184,10 @@ def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true
 
         if true_i % args.print_every == 0:
             print("Epoch: {}/{} Iteration: {}/{} Loss: {}".format(j,
-                                                                  args.max_iters, true_i, len(dl), sum(tmp_losses)/len(tmp_losses)))
+                                                                  args.max_iters, i, len(dl), sum(tmp_losses)/len(tmp_losses)))
             tmp_losses = []
+            if args.save_imgs:
+                _log_images(X, Y, Y_hat, true_i, writer, "train")
 
         if true_i % args.save_every == 0:
             # Save Model
@@ -205,10 +212,10 @@ def main(args):
 
     transform = transforms.Compose([Clip(), NormalizeHV()])
     ds = CTDataset(files_train, transform=transform)
-    dl = DataLoader(ds, batch_size=1, shuffle=args.shuffle)
+    dl = DataLoader(ds, batch_size=1, shuffle=args.shuffle, num_workers=12)
 
     ds_val = CTDataset(files_val, transform=transform)
-    dl_val = DataLoader(ds_val, batch_size=1, shuffle=args.shuffle)
+    dl_val = DataLoader(ds_val, batch_size=1, shuffle=args.shuffle, num_workers=12)
 
     writer = SummaryWriter()
 
@@ -233,7 +240,7 @@ def main(args):
     losses = {"train": all_losses, "validation": eval_losses, "best": best_loss}
 
     print("Start Training...")
-    true_i = 1
+    true_i = 10001
     for j in range(args.max_iters):
         losses, true_i = train(model, dl, dl_val, optimizer,
                                criterion, args, writer, device, j, true_i, losses)

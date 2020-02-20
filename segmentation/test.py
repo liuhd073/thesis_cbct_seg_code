@@ -15,8 +15,41 @@ from utils.plotting import plot_2d
 from resblockunet import ResBlockUnet
 from torch.utils.data import DataLoader
 from preprocess import Clip, NormalizeHV
-from dataset_extra_CTs import ExtraCervixDataset
-from dataset import CervixDataset
+from dataset import CTDataset
+from mini_model import UNetResBlocks
+
+
+def _log_images(X, Y, Y_hat, i, writer, tag="train"):
+    middle_slice = X.shape[2] // 2
+    img_arr = X[0, 0, middle_slice, :, :].detach().cpu()
+    seg_arr_bladder = Y[:, 0, :, :, :].squeeze().detach().cpu()
+    seg_arr_cervix = Y[:, 1, :, :, :].squeeze().detach().cpu()
+
+    out_arr_bladder = Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu()
+    out_arr_cervix = Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu()
+
+    masked_img_bladder = np.array(
+        plot_2d(img_arr, mask=out_arr_bladder, mask_color="r", mask_threshold=0.5))
+    masked_img_cervix = np.array(
+        plot_2d(img_arr, mask=out_arr_cervix, mask_color="r", mask_threshold=0.5))
+
+    masked_img_bladder = torch.from_numpy(
+        np.array(plot_2d(masked_img_bladder, mask=seg_arr_bladder, mask_color="g")))
+    masked_img_cervix = torch.from_numpy(
+        np.array(plot_2d(masked_img_cervix, mask=seg_arr_cervix, mask_color="g")))
+
+    writer.add_image(
+        f"{tag}/bladder", Y_hat.exp()[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+    writer.add_image(
+        f"{tag}/cervix", Y_hat.exp()[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+    writer.add_image(
+        f"{tag}/bladder_gt", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+    writer.add_image(
+        f"{tag}/cervix_gt", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+    writer.add_image(
+        f"{tag}/mask_bladder", masked_img_bladder, i, dataformats="HWC")
+    writer.add_image(
+        f"{tag}/mask_cervix", masked_img_cervix, i, dataformats="HWC")
 
 
 def iou(ground_truth, segmentation, threshold=0.5, eps=1e-5):
@@ -51,6 +84,7 @@ def test(args, dl, writer, model, image_shapes):
 
     print("Start Testing...")
     img_losses = []
+    tmp_losses = []
 
     segmentations = {0: [], 1: [], "y_bladder": [], "y_cervix": []}
 
@@ -62,16 +96,16 @@ def test(args, dl, writer, model, image_shapes):
     print(os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")))
     print(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
 
-    if os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")):
-        _, metadata = read_image(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
-    else: 
-        _, metadata = read_image(os.path.join(args.root_dir, "patients", patient, "CT1.nii"))
+    # if os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")):
+    #     _, metadata = read_image(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
+    # else: 
+    #     _, metadata = read_image(os.path.join(args.root_dir, "patients", patient, "CT1.nii"))
 
     print(patient.replace("/", "_"))
 
     j = 0
     for i, (X, Y) in enumerate(dl):
-        if img_i >= img_shape:
+        if img_i >= img_shape and args.save_3d:
             img_i = 0
             print("NEW IMAGE")
 
@@ -113,97 +147,59 @@ def test(args, dl, writer, model, image_shapes):
         assert Y_hat.shape == Y.shape, "output and classification must be same shape, {}, {}".format(
             Y_hat.shape, Y.shape)
 
-        img_arr = X[0,0,10,:,:].detach().cpu()
-        seg_arr_bladder = Y[:,0,:,:,:].squeeze().detach().cpu()
-        seg_arr_cervix = Y[:,1,:,:,:].squeeze().detach().cpu()
-        out_arr_bladder = Y_hat[:,0,:,:,:].squeeze().detach().cpu()
-        out_arr_cervix = Y_hat[:,1,:,:,:].squeeze().detach().cpu()
-
-        masked_img_bladder = np.array(plot_2d(img_arr, mask=out_arr_bladder, mask_color="r", mask_threshold=0.8))
-        masked_img_cervix = np.array(plot_2d(img_arr, mask=out_arr_cervix, mask_color="r", mask_threshold=0.8))
-
-        masked_img_bladder = torch.from_numpy(np.array(plot_2d(masked_img_bladder, mask=seg_arr_bladder, mask_color="g")))
-        masked_img_cervix = torch.from_numpy(np.array(plot_2d(masked_img_cervix, mask=seg_arr_cervix, mask_color="g")))
-
-        writer.add_image(
-            "images_true/0", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
-        writer.add_image(
-            "images_true/1", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
-
-        segmentations["y_bladder"].append(Y[:, 0, :, :, :].squeeze().detach().cpu())
-        segmentations["y_cervix"].append(Y[:, 1, :, :, :].squeeze().detach().cpu())
+        if args.save_3d:
+            segmentations["y_bladder"].append(Y[:, 0, :, :, :].squeeze().detach().cpu())
+            segmentations["y_cervix"].append(Y[:, 1, :, :, :].squeeze().detach().cpu())
 
         Y_hat = softmax(Y_hat)
-        Y = Y.argmax(1)
-
-        writer.add_image(
-            "images_true/mask_bladder", masked_img_bladder, i, dataformats="HWC")
-        writer.add_image(
-            "images_true/mask_cervix", masked_img_cervix, i, dataformats="HWC")
-
-        writer.add_image(
-            "images/0", Y_hat.exp()[:, 0, :, :, :].squeeze(), i, dataformats="HW")
-        writer.add_image(
-            "images/1", Y_hat.exp()[:, 1, :, :, :].squeeze(), i, dataformats="HW")
-        writer.add_image(
-            "images/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
-
-        # TODO: create whole image and segmentation
-
-        loss = criterion(Y_hat, Y)
-        img_losses.append(loss.item())
+        loss = criterion(Y_hat, Y.argmax(1))
+        tmp_losses.append(loss.detach().cpu().item())
         # writer.add_scalar("loss/train", loss.item(), j * len(dl) + i)
 
-
-        # image.append(X[:,:,10:11,:,:].squeeze().data)
         segmentations[0].append(Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu() > 0.8)
         segmentations[1].append(Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu() > 0.8)
         
         torch.cuda.empty_cache()
 
-        if (j * len(dl) + i) % args.print_every == 0:
-            print("Iteration: {}/{} Loss: {}".format(j * len(dl) +
-                                                     i, len(dl) * args.max_iters, loss.item()))
+        _log_images(X, Y, Y_hat, i, writer, tag="test")
+
+        if img_i % args.print_every == 0:
+            print("Epoch: {}/{} Iteration: {}/{} Loss: {}".format(j,
+                                                                  args.max_iters, i, len(dl), sum(tmp_losses)/len(tmp_losses)))
+            tmp_losses = []
+
         img_i += 1
 
-    avg_loss = sum(img_losses) / len(img_losses)
-    writer.add_scalar("loss/average", avg_loss, j)
-
-    print("Iteration: {}/{} Average Loss: {}".format(j *
-                                                     len(dl) + i, len(dl) * args.max_iters, avg_loss))
     print("End testing")
 
 
 def main(args):
     device = "cuda"
     # Dataset for ONE CT image
-    image_shapes = pickle.load(open("extra_CT_shapes_validation.p", 'rb'))
+    image_shapes = pickle.load(open("files_test.p", 'rb'))
     
     transform = transforms.Compose([Clip(), NormalizeHV()])
-    ds = ExtraCervixDataset(args.root_dir + "/converted", image_shapes, transform=transform)
-    dl = DataLoader(ds, batch_size=1, shuffle=False)
+    ds = CTDataset(image_shapes, transform=transform)
+    if args.save_3d:
+        dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=12)
+        # _, metadata = read_image("/data/cervix/converted/CervixLoP-1/full/CT.nrrd")
+        # print(metadata)
+    else: 
+        dl = DataLoader(ds, batch_size=1, shuffle=True, num_workers=12)
 
     writer = SummaryWriter()
-
-    _, metadata = read_image("/data/cervix/converted/CervixLoP-1/full/CT.nrrd")
-    print(metadata)
-
+    
     print("Loading Model...")
-    model = ResBlockUnet(1, 3, (1, 512, 512))
+    # model = ResBlockUnet(1, 3, (1, 512, 512))
+    model = UNetResBlocks()
     model.load_state_dict(torch.load(open(args.model_file, 'rb')))
     print("Model loaded!")
     model.to(device)
     model.eval()
 
-    test(args, dl, writer, model, list(image_shapes.items()))
+    print(image_shapes)
 
-    image_shapes = pickle.load(open("CT_shapes_validation.p", 'rb'))
-    
-    transform = transforms.Compose([Clip(), NormalizeHV()])
-    ds = CervixDataset(args.root_dir + "/patients", image_shapes, transform=transform)
-    dl = DataLoader(ds, batch_size=1, shuffle=False)
-
-    test(args, dl, writer, model, list(image_shapes.items()))
+    test(args, dl, writer, model, image_shapes)
 
 
 def parse_args():
@@ -219,6 +215,9 @@ def parse_args():
                         default=1, required=False, type=int)
     parser.add_argument("-print_every", help="Print every X iterations",
                         default=10, required=False, type=int)
+    parser.add_argument("-save_3d", help="Save 3D segmentations",
+                        default=False, required=False, action="store_true")
+    
 
     args = parser.parse_args()
 
