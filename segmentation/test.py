@@ -170,6 +170,7 @@ def test(args, dl, writer, model, image_shapes):
 
         img_i += 1
 
+    writer.flush()
     print("End testing")
 
 
@@ -197,7 +198,9 @@ def main(args):
     model.to(device)
     model.eval()
 
-    print(image_shapes)
+    pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    print(pytorch_total_params)
 
     test(args, dl, writer, model, image_shapes)
 

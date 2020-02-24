@@ -98,7 +98,10 @@ class CTDataset(Dataset):
 
         start = int((self.image_shapes[patient][1] - 512) / 2)
 
-        im_slice = crop_to_bbox(self.image, (0, slice_idx - 3, start, start, 1, 21, 512, 512))
+        n_slices = 13
+        middle_slice = n_slices // 2
+
+        im_slice = crop_to_bbox(self.image, (0, slice_idx - middle_slice, start, start, 1, n_slices, 512, 512))
         seg_slice = crop_to_bbox(self.segmentation, (0, slice_idx, 0, 0, 3, 1, 512, 512))
 
         assert (
