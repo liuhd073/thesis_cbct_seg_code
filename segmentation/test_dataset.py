@@ -47,7 +47,7 @@ def train(args):
         writer.add_image(
             "dataset_test/other", Y[:, 2, :, :, :].squeeze(), i, dataformats="HW")
         writer.add_image( 
-            "dataset_test/X", X[:, :, 4, :, :].squeeze(), i, dataformats="HW")
+            "dataset_test/X", X[:, :, X.shape[2]//2, :, :].squeeze(), i, dataformats="HW")
 
     print("Seg slices:", seg_slices)
     print("No seg slices:", no_seg_slices)
