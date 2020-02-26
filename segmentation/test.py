@@ -165,7 +165,7 @@ def test(args, dl, writer, model, image_shapes):
 
         if img_i % args.print_every == 0:
             print("Epoch: {}/{} Iteration: {}/{} Loss: {}".format(j,
-                                                                  args.max_iters, i, len(dl), sum(tmp_losses)/len(tmp_losses)))
+                                                                  args.max_epochs, i, len(dl), sum(tmp_losses)/len(tmp_losses)))
             tmp_losses = []
 
         img_i += 1
@@ -214,7 +214,7 @@ def parse_args():
     parser.add_argument("-model_file", help="Get the file containing the model weights",
                         default="final_model.pt", required=False)
 
-    parser.add_argument("-max_iters", help="Maximum number of iterations",
+    parser.add_argument("-max_epochs", help="Maximum number of epochs",
                         default=1, required=False, type=int)
     parser.add_argument("-print_every", help="Print every X iterations",
                         default=10, required=False, type=int)

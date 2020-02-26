@@ -2,6 +2,7 @@ import pickle
 import os
 import torch
 import argparse
+import neptune
 import numpy as np
 import matplotlib.pyplot as plt
 import torchvision.transforms as transforms
@@ -116,10 +117,8 @@ def evaluate(dl_val, writer, model, device, criterion, j, max_iters=None):
         Y_hat = model(X)
         if args.loss_func == "NLL":
             Y_hat = softmax(Y_hat)
-        loss = criterion(Y_hat, Y.argmax(1))
-        topkloss, _ = torch.topk(loss.flatten(), int(args.topk*loss.numel()))
-        loss = topkloss.mean()
-
+        loss = criterion(Y_hat, Y.argmax(1)).mean()
+        
         if args.save_imgs:
             _log_images(X, Y, Y_hat, i, writer, "validation")
 
@@ -168,13 +167,14 @@ def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true
         losses["train"].append(loss.detach().cpu().item())
         tmp_losses.append(losses["train"][-1])
         writer.add_scalar("loss/train", losses["train"][-1], true_i)
-
+        neptune.send_metric("loss/train", true_i, losses["train"][-1])
 
         if true_i % args.eval_every == 0:
             eval_loss = evaluate(dl_val, writer, model, device, criterion, j)
             writer.add_scalar("loss/validation", eval_loss, true_i)
+            neptune.send_metric("loss/validation", true_i, eval_loss)
             print("Epoch: {}/{} Validation Loss: {}".format(true_i,
-                                                            len(dl) * args.max_iters, eval_loss))
+                                                            args.max_iters, eval_loss))
             if eval_loss < losses["best"]:
                 losses["best"] = eval_loss
                 model_fn = args.model_dir / "best_model_{}.pt".format(args.loss_func)
@@ -183,8 +183,8 @@ def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true
             losses["validation"].append(eval_loss)
 
         if true_i % args.print_every == 0:
-            print("Epoch: {}/{} Iteration: {}/{} Loss: {}".format(j,
-                                                                  args.max_iters, i, len(dl), sum(tmp_losses)/len(tmp_losses)))
+            print("True Iteration: {} Epoch: {}/{} Iteration: {}/{} Loss: {}".format(true_i, j,
+                                                                  args.max_epochs, i, len(dl), sum(tmp_losses)/len(tmp_losses)))
             tmp_losses = []
             if args.save_imgs:
                 _log_images(X, Y, Y_hat, true_i, writer, "train")
@@ -194,6 +194,8 @@ def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true
             model_fn = args.model_dir / "model_{}_{}.pt".format(true_i, args.loss_func)
             torch.save(model.state_dict(), model_fn)
             print("Model saved in model_{}_{}.pt".format(true_i, args.loss_func))
+            if true_i >= args.max_iters:
+                exit(1)
 
         true_i += 1
 
@@ -223,6 +225,7 @@ def main(args):
     # model = get_model(args, device)
     print("Model Loaded")
     optimizer = Adam(model.parameters(), lr=args.lr)
+    # TODO: Add LR scheduler
 
     criterion = get_loss_func(args.loss_func)
 
@@ -240,8 +243,8 @@ def main(args):
     losses = {"train": all_losses, "validation": eval_losses, "best": best_loss}
 
     print("Start Training...")
-    true_i = 10001
-    for j in range(args.max_iters):
+    true_i = 1
+    for j in range(args.max_epochs):
         losses, true_i = train(model, dl, dl_val, optimizer,
                                criterion, args, writer, device, j, true_i, losses)
 
@@ -258,8 +261,8 @@ def main(args):
 def parse_args():
     parser = argparse.ArgumentParser(description='Get data shapes')
 
-    parser.add_argument("-root_dir", help="Get root directory of data",
-                        default="/data/cervix", required=False)
+    parser.add_argument("-experiment_name", help="Set name of the experiment in Neptune",
+                        default="Experiment", required=False)
     parser.add_argument("-model_file", help="Get the file containing the model weights",
                         default="final_model.pt", required=False)
     parser.add_argument("-load_model", help="Get the model weights",
@@ -286,8 +289,10 @@ def parse_args():
     parser.add_argument("-no_shuffle", dest="shuffle", help="Shuffle dataset",
                         default=True, required=False, action="store_false")
 
+    parser.add_argument("-max_epochs", help="Maximum number of iterations",
+                        default=100, required=False, type=int)
     parser.add_argument("-max_iters", help="Maximum number of iterations",
-                        default=10, required=False, type=int)
+                        default=150000, required=False, type=int)
     parser.add_argument("-print_every", help="Print every X iterations",
                         default=10, required=False, type=int)
     parser.add_argument("-save_every", help="Save model every X epochs",
@@ -302,6 +307,29 @@ def parse_args():
     return args
 
 
+def get_params(args):
+    PARAMS = {}
+    PARAMS["Model"] = "3D U-Net + ResNet"
+    PARAMS["shuffle"] = args.shuffle
+    PARAMS["Equal_train"] = args.equal_train
+    PARAMS["Top_k"] = args.topk
+    PARAMS["Save_every"] = args.save_every
+    PARAMS["Eval_every"] = args.eval_every
+    PARAMS["Learning_Rate"] = args.lr
+    PARAMS["Pooling"] = "Avg"
+    return PARAMS
+
+
 if __name__ == "__main__":
     args = parse_args()
+
+    PARAMS = get_params(args)
+    neptune.init('twagenaar/Thesis-CT-seg')
+            #  api_token='eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiYTBmMjhmOGItMGYxOC00NTgwLTgzNTAtMzhlNGQ3OTdlNjQxIn0=')
+    neptune.create_experiment(name=args.experiment_name, params=PARAMS)
+    neptune.append_tag("running")
     main(args)
+
+    neptune.remove_tag("running")
+    neptune.append_tag("finished")
+    neptune.stop()
