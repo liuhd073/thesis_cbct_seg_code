@@ -13,7 +13,9 @@ import numpy as np
 
 
 class CTDataset(Dataset):
-    def __init__(self, files, transform=None, cachedir="/cache"):
+    def __init__(self, files, n_slices=21, return_meta=False, transform=None, cachedir="/cache"):
+        self.n_slices = n_slices
+        self.return_meta = return_meta
         self.image_shapes = {tup[0]: tup[1] for tup in files}
         self.data = {tup[0]: (tup[2], tup[3]) for tup in files}
         self.patients = list(self.image_shapes.keys())
@@ -29,14 +31,14 @@ class CTDataset(Dataset):
 
     def _get_segmentation(self, segmentations):
         if len(segmentations) == 2:
-            seg_bladder = read_image(segmentations[0], no_meta=True, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
-            seg_cervix_uterus = read_image(segmentations[1], no_meta=True, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
+            seg_bladder = read_image(segmentations[0], no_meta=True) #, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
+            seg_cervix_uterus = read_image(segmentations[1], no_meta=True) #, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
             all_segs = seg_bladder + seg_cervix_uterus
         # Combine cervix and uterus segmentation
         elif len(segmentations) == 3:
-            seg_bladder = read_image(segmentations[0], no_meta=True, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
-            seg_cervix = read_image(segmentations[1], no_meta=True, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
-            seg_uterus = read_image(segmentations[2], no_meta=True, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
+            seg_bladder = read_image(segmentations[0], no_meta=True) #, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
+            seg_cervix = read_image(segmentations[1], no_meta=True) #, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
+            seg_uterus = read_image(segmentations[2], no_meta=True) #, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
             seg_cervix_uterus = (seg_cervix | seg_uterus)
             all_segs = seg_bladder + seg_cervix + seg_uterus
         start = int((all_segs.shape[1] - 512) / 2)
@@ -57,7 +59,7 @@ class CTDataset(Dataset):
             segmentation = read_object(cache_fn_seg)
         else:
             image_path, segmentation_paths = self.data[patient]
-            image = read_image(image_path, no_meta=True, spacing=(0.9765625, 0.9765625, 5))
+            image = read_image(image_path, no_meta=True) #, spacing=(0.9765625, 0.9765625, 5))
             # print(image.shape)
             # image = crop_to_bbox(image, (0, start, start, image.shape[0], 512, 512))
             if patient.isdigit():
@@ -97,11 +99,9 @@ class CTDataset(Dataset):
             self.current_patient = patient
 
         start = int((self.image_shapes[patient][1] - 512) / 2)
+        middle_slice = self.n_slices // 2
 
-        n_slices = 13
-        middle_slice = n_slices // 2
-
-        im_slice = crop_to_bbox(self.image, (0, slice_idx - middle_slice, start, start, 1, n_slices, 512, 512))
+        im_slice = crop_to_bbox(self.image, (0, slice_idx - middle_slice, start, start, 1, self.n_slices, 512, 512))
         seg_slice = crop_to_bbox(self.segmentation, (0, slice_idx, 0, 0, 3, 1, 512, 512))
 
         assert (
