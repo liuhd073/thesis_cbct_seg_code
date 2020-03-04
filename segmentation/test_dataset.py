@@ -3,7 +3,7 @@ Author: Tessa Wagenaar
 """
 
 from dataset import CTDataset
-from preprocess import Clip, NormalizeHV, NormalizeIMG
+from preprocess import *
 from torch.utils.data import DataLoader
 from resblockunet import ResBlockUnet
 from torch.optim import Adam
@@ -19,26 +19,38 @@ import argparse
 import pickle
 import torch
 import os
+import logging
+import sys
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler(sys.stdout)
+formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(name)s : %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 def train(args):
     j=0
     writer = SummaryWriter()
-    files_train = pickle.load(open("files_train.p", 'rb'))
-    transform = transforms.Compose([Clip(), NormalizeHV()])
-    ds = CTDataset(files_train, transform=transform, cachedir="/tmp")
+    files_train = pickle.load(open("files_test.p", 'rb'))
+    preprocess = transforms.Compose([Clip(), NormalizeHV(), Identity()])
+    augmentation = transforms.Compose([GaussianAdditiveNoise(0, 0.1)]) # , RandomFlip(), RandomZoom(0.1)
+    # augmentation = transforms.Compose([RandomTransform([RandomFlip(), GaussianAdditiveNoise(0, 0.1), RandomZoom(0.1)])])
+    ds = CTDataset(files_train, preprocess=preprocess, augmentation=augmentation, cachedir="/tmp")
     dl = DataLoader(ds, batch_size=1, shuffle=False)
     seg_slices = 0
     no_seg_slices = 0
 
     for i, (X, Y) in enumerate(dl):
-        print("{} {}/{} X: {} Y: {}".format(j, i, len(dl), X.shape, Y.shape))
+        logger.info("{}/{} X: {} Y: {}".format(i, len(dl), X.shape, Y.shape))
+        # print("{} {}/{} X: {} Y: {}".format(j, i, len(dl), X.shape, Y.shape))
         if len(Y.argmax(1).unique()) < 2:
             no_seg_slices += 1
         else: 
             seg_slices += 1
 
-        print("Unique:", Y.argmax(1).unique())
+        logger.debug("Unique:".format(Y.argmax(1).unique()))
+        # print("Unique:", Y.argmax(1).unique())
     
         writer.add_image(
             "dataset_test/bladder", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")

@@ -15,7 +15,7 @@ from pathlib import Path
 from resblockunet import ResBlockUnet
 from torch.utils.data import DataLoader
 from dataset import CTDataset
-from preprocess import Clip, NormalizeHV
+from preprocess import Clip, NormalizeHV, GaussianAdditiveNoise
 from utils.plotting import plot_2d
 from mini_model import UNetResBlocks  # , UNet
 import time
@@ -173,7 +173,7 @@ def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true
             eval_loss = evaluate(dl_val, writer, model, device, criterion, j)
             writer.add_scalar("loss/validation", eval_loss, true_i)
             neptune.send_metric("loss/validation", true_i, eval_loss)
-            print("Epoch: {}/{} Validation Loss: {}".format(true_i,
+            print("Iteration: {}/{} Validation Loss: {}".format(true_i,
                                                             args.max_iters, eval_loss))
             if eval_loss < losses["best"]:
                 losses["best"] = eval_loss
@@ -212,17 +212,18 @@ def main(args):
     files_val = pickle.load(
         open("files_validation.p", 'rb'))  # validation
 
-    transform = transforms.Compose([Clip(), NormalizeHV()])
-    ds = CTDataset(files_train, transform=transform)
+    preprocess = transforms.Compose([Clip(), NormalizeHV()])
+    augmentation = transforms.Compose([GaussianAdditiveNoise(0, 0.1)])
+    ds = CTDataset(files_train, preprocess=preprocess, augmentation=augmentation)
     dl = DataLoader(ds, batch_size=1, shuffle=args.shuffle, num_workers=12)
 
-    ds_val = CTDataset(files_val, transform=transform)
+    ds_val = CTDataset(files_val, preprocess=preprocess, augmentation=augmentation)
     dl_val = DataLoader(ds_val, batch_size=1, shuffle=args.shuffle, num_workers=12)
 
     writer = SummaryWriter()
 
-    model = UNetResBlocks().to(device)
-    # model = get_model(args, device)
+    # model = UNetResBlocks().to(device)
+    model = get_model(args, device)
     print("Model Loaded")
     optimizer = Adam(model.parameters(), lr=args.lr)
     # TODO: Add LR scheduler
@@ -309,14 +310,14 @@ def parse_args():
 
 def get_params(args):
     PARAMS = {}
-    PARAMS["Model"] = "3D U-Net + ResNet"
+    PARAMS["Model"] = "3D U-Net + ResNet, max pooling"
     PARAMS["shuffle"] = args.shuffle
     PARAMS["Equal_train"] = args.equal_train
     PARAMS["Top_k"] = args.topk
     PARAMS["Save_every"] = args.save_every
     PARAMS["Eval_every"] = args.eval_every
     PARAMS["Learning_Rate"] = args.lr
-    PARAMS["Pooling"] = "Avg"
+    PARAMS["Pooling"] = "max"
     return PARAMS
 
 
@@ -325,7 +326,6 @@ if __name__ == "__main__":
 
     PARAMS = get_params(args)
     neptune.init('twagenaar/Thesis-CT-seg')
-            #  api_token='eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiYTBmMjhmOGItMGYxOC00NTgwLTgzNTAtMzhlNGQ3OTdlNjQxIn0=')
     neptune.create_experiment(name=args.experiment_name, params=PARAMS)
     neptune.append_tag("running")
     main(args)
