@@ -18,24 +18,28 @@ class Clip(object):
     def __init__(self):
         pass
 
-    def __call__(self, image):
-        return np.clip(image, MIN_HV, MAX_HV)
+    def __call__(self, sample):
+        sample["image"] = np.clip(sample["image"], MIN_HV, MAX_HV)
+        return sample
 
 
 class NormalizeHV(object):
     def __init__(self):
         pass
 
-    def __call__(self, image):
-        return (image - MIN_HV) / (MAX_HV - MIN_HV)
+    def __call__(self, sample):
+        sample["image"] = (sample["image"] - MIN_HV) / (MAX_HV - MIN_HV)
+        return sample
 
 
 class NormalizeIMG(object):
     def __init__(self):
         pass
 
-    def __call__(self, image):
-        return (image - image.min()) / (image.max() - image.min())
+    def __call__(self, sample):
+        image = sample["image"]
+        sample["image"] = (image - image.min()) / (image.max() - image.min())
+        return sample
 
 
 class Identity(object):
