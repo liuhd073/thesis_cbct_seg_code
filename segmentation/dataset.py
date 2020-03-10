@@ -14,14 +14,13 @@ import numpy as np
 
 
 class CTDataset(Dataset):
-    def __init__(self, files, n_slices=21, return_meta=False, preprocess=None, augmentation=None, cachedir="/cache"):
+    def __init__(self, files, n_slices=21, return_meta=False, transform=None, cachedir="/cache"):
         self.n_slices = n_slices
         self.return_meta = return_meta
         self.image_shapes = {tup[0]: tup[1] for tup in files}
         self.data = {tup[0]: (tup[2], tup[3]) for tup in files}
         self.patients = list(self.image_shapes.keys())
-        self.preprocess = preprocess
-        self.augmentation = augmentation
+        self.transform = transform
         self.cumulative_imshapes = [0] + list(
             np.cumsum([self.image_shapes[patient][-3] for patient in self.patients])
         )
@@ -75,8 +74,8 @@ class CTDataset(Dataset):
                 # add "channels" dimension if it is not present
                 image = np.expand_dims(image, axis=0)
                 # segmentation = np.expand_dims(segmentation, axis=0)
-            if self.preprocess:
-                image = self.preprocess(image)
+            # if self.preprocess:
+            #     image = self.preprocess(image)
             save_object(image, cache_fn)
             save_object(segmentation, cache_fn_seg)
 
@@ -107,7 +106,7 @@ class CTDataset(Dataset):
         seg_slice = crop_to_bbox(self.segmentation, (0, slice_idx, 0, 0, 3, 1, 512, 512))
 
         sample = {"image": im_slice, "target": seg_slice}
-        sample = self.augmentation(sample)
+        sample = self.transform(sample)
         im_slice = sample["image"]
         seg_slice = sample["target"]
 
