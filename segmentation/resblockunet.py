@@ -366,6 +366,8 @@ class ResBlock(nn.Module):
             ks = [2, 2, 2]
             ks[compress_dim] = 1
             self.pooling = nn.AvgPool3d(kernel_size=ks)
+            # self.pooling = nn.MaxPool3d(kernel_size=ks)
+            # self.pooling = nn.Conv3d(out_ch, out_ch, ks, stride=ks)
 
     def forward(self, x):
         in_shape = list(x.size())

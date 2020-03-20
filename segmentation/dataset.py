@@ -99,11 +99,12 @@ class CTDataset(Dataset):
             self.image, self.segmentation = self._load_image(patient)
             self.current_patient = patient
 
-        start = int((self.image_shapes[patient][1] - 512) / 2)
+        # start = int((self.image_shapes[patient][1] - 512) / 2)
+        start = 0
         middle_slice = self.n_slices // 2
 
         im_slice = crop_to_bbox(self.image, (0, slice_idx - middle_slice, start, start, 1, self.n_slices, 512, 512))
-        seg_slice = crop_to_bbox(self.segmentation, (0, slice_idx, 0, 0, 3, 1, 512, 512))
+        seg_slice = crop_to_bbox(self.segmentation, (0, slice_idx, start, start, 3, 1, 512, 512))
 
         sample = {"image": im_slice, "target": seg_slice}
         sample = self.transform(sample)
