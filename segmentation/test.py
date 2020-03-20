@@ -18,6 +18,18 @@ from preprocess import Clip, NormalizeHV
 from dataset import CTDataset
 from mini_model import UNetResBlocks
 
+import sys 
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler(sys.stdout)
+formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(name)s : %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+
+torch.backends.cudnn.benchmark = True
 
 def _log_images(X, Y, Y_hat, i, writer, tag="train"):
     middle_slice = X.shape[2] // 2
@@ -82,56 +94,30 @@ def test(args, dl, writer, model, image_shapes):
     criterion = get_loss_func("NLL")
     softmax = nn.LogSoftmax(1)
 
-    print("Start Testing...")
+    logger.info("Start Testing...")
     img_losses = []
     tmp_losses = []
 
     segmentations = {0: [], 1: [], "y_bladder": [], "y_cervix": []}
+
+    image_shapes.append(None)
 
     img_i = 0
     temp = image_shapes.pop(0)
     img_shape = temp[1][0]
     patient = temp[0].replace("_", "/")
 
-    print(os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")))
-    print(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
+    logger.debug(os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")))
+    logger.debug(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
 
     if os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")):
         _, metadata = read_image(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
     else: 
         _, metadata = read_image(os.path.join(args.root_dir, "patients", patient, "CT1.nii"))
 
-    print(patient.replace("/", "_"))
+    logger.debug(patient.replace("/", "_"))
 
-    j = 0
     for i, (X, Y) in enumerate(dl):
-        if img_i >= img_shape and args.save_3d:
-            img_i = 0
-            print("NEW IMAGE", patient)
-
-            y_bladder = torch.stack(segmentations["y_bladder"])
-            y_cervix = torch.stack(segmentations["y_cervix"])
-            seg_bladder = torch.stack(segmentations[0]).int()
-            seg_cervix_uterus = torch.stack(segmentations[1]).int()
-
-            write_image(seg_bladder, "testing/{}_seg_bladder.nrrd".format(patient.replace("/", "_")), metadata=metadata)
-            write_image(seg_cervix_uterus,
-                    "testing/{}_seg_cervix_uterus.nrrd".format(patient.replace("/", "_")), metadata=metadata)
-
-            print("IoU bladder:", iou(y_bladder, seg_bladder, threshold=0.8))
-            print("IoU cervix/uterus:", iou(y_cervix, seg_cervix_uterus, threshold=0.8))
-            print("Dice bladder:", dice(y_bladder, seg_bladder, threshold=0.8))
-            print("Dice cervix/uterus:", dice(y_cervix, seg_cervix_uterus, threshold=0.8))
-
-            segmentations = {0: [], 1: [], "y_bladder": [], "y_cervix": []}
-            temp = image_shapes.pop(0)
-            img_shape = temp[1][0]
-            patient = temp[0].replace("_", "/")
-
-            if os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")):
-                _, metadata = read_image(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
-            else: 
-                _, metadata = read_image(os.path.join(args.root_dir, "patients", patient, "CT1.nii"))
 
 
         torch.cuda.empty_cache()
@@ -155,19 +141,47 @@ def test(args, dl, writer, model, image_shapes):
         segmentations[0].append(Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu() > 0.8)
         segmentations[1].append(Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu() > 0.8)
         
+        img_i += 1
+
+        if img_i >= img_shape and args.save_3d:
+            img_i = 0
+            logger.info(f"Saving image {patient}")
+
+            y_bladder = torch.stack(segmentations["y_bladder"])
+            y_cervix = torch.stack(segmentations["y_cervix"])
+            seg_bladder = torch.stack(segmentations[0]).int()
+            seg_cervix_uterus = torch.stack(segmentations[1]).int()
+
+            write_image(seg_bladder, "testing/{}_seg_bladder.nrrd".format(patient.replace("/", "_")), metadata=metadata)
+            write_image(seg_cervix_uterus,
+                    "testing/{}_seg_cervix_uterus.nrrd".format(patient.replace("/", "_")), metadata=metadata)
+
+            logger.info(f"IoU bladder: {iou(y_bladder, seg_bladder, threshold=0.8)}")
+            logger.info(f"IoU cervix/uterus: {iou(y_cervix, seg_cervix_uterus, threshold=0.8)}")
+            logger.info(f"Dice bladder: {dice(y_bladder, seg_bladder, threshold=0.8)}")
+            logger.info(f"Dice cervix/uterus: {dice(y_cervix, seg_cervix_uterus, threshold=0.8)}")
+
+            segmentations = {0: [], 1: [], "y_bladder": [], "y_cervix": []}
+            temp = image_shapes.pop(0)
+            img_shape = temp[1][0]
+            patient = temp[0].replace("_", "/")
+
+            if os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")):
+                _, metadata = read_image(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
+            else: 
+                _, metadata = read_image(os.path.join(args.root_dir, "patients", patient, "CT1.nii"))
+
         torch.cuda.empty_cache()
 
         _log_images(X, Y, Y_hat, i, writer, tag="test")
 
         if img_i % args.print_every == 0:
-            print("Epoch: {}/{} Iteration: {}/{} Loss: {}".format(j,
-                                                                  args.max_epochs, i, len(dl), sum(tmp_losses)/len(tmp_losses)))
+            logger.info("Iteration: {}/{} Loss: {}".format(i, len(dl), sum(tmp_losses)/len(tmp_losses)))
             tmp_losses = []
 
-        img_i += 1
 
     writer.flush()
-    print("End testing")
+    logger.info("End testing")
 
 
 def main(args):
@@ -175,7 +189,7 @@ def main(args):
     # Dataset for ONE CT image
     image_shapes = pickle.load(open("files_test.p", 'rb'))
     
-    transform = transforms.Compose([Clip(), NormalizeHV()])
+    transform = transforms.Compose([GaussianAdditiveNoise(0, 20), Clip(), NormalizeHV()])
     ds = CTDataset(image_shapes, transform=transform, n_slices=21)
     if args.save_3d:
         dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=12)
@@ -186,17 +200,17 @@ def main(args):
 
     writer = SummaryWriter()
     
-    print("Loading Model...")
+    logger.info("Loading Model...")
     model = ResBlockUnet(1, 3, (1, 512, 512))
     # model = UNetResBlocks()
     model.load_state_dict(torch.load(open(args.model_file, 'rb')))
-    print("Model loaded!")
+    logger.info("Model loaded!")
     model.to(device)
     model.eval()
 
     pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    print(pytorch_total_params)
+    logger.debug(pytorch_total_params)
 
     test(args, dl, writer, model, image_shapes)
 
@@ -205,13 +219,11 @@ def parse_args():
 
     parser = argparse.ArgumentParser(description='Get data shapes')
 
-    parser.add_argument("-root_dir", help="Get root directory of data",
+    parser.add_argument("-root_dir", help="Dictionary containing the data",
                         default="/data/cervix", required=False)
     parser.add_argument("-model_file", help="Get the file containing the model weights",
                         default="final_model.pt", required=False)
 
-    parser.add_argument("-max_epochs", help="Maximum number of epochs",
-                        default=1, required=False, type=int)
     parser.add_argument("-print_every", help="Print every X iterations",
                         default=10, required=False, type=int)
     parser.add_argument("-save_3d", help="Save 3D segmentations",
