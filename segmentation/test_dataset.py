@@ -33,11 +33,11 @@ def train(args):
     j=0
     writer = SummaryWriter()
     files_train = pickle.load(open("files_test.p", 'rb'))
-    preprocess = transforms.Compose([Clip(), NormalizeHV(), Identity()])
-    augmentation = transforms.Compose([GaussianAdditiveNoise(0, 0.1)]) # , RandomFlip(), RandomZoom(0.1)
-    # augmentation = transforms.Compose([RandomTransform([RandomFlip(), GaussianAdditiveNoise(0, 0.1), RandomZoom(0.1)])])
-    ds = CTDataset(files_train, preprocess=preprocess, augmentation=augmentation, cachedir="/tmp")
-    dl = DataLoader(ds, batch_size=1, shuffle=False)
+    preprocess = transforms.Compose([Clip(), NormalizeHV()])
+    augmentation = transforms.Compose([GaussianAdditiveNoise(0, 20), Clip(), NormalizeHV()])
+    # augmentation = transforms.Compose([Identity()])
+    ds = CTDataset(files_train, preprocess=preprocess, augmentation=augmentation)
+    dl = DataLoader(ds, batch_size=1, shuffle=True, num_workers=1)
     seg_slices = 0
     no_seg_slices = 0
 

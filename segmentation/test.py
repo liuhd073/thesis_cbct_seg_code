@@ -57,7 +57,7 @@ def iou(ground_truth, segmentation, threshold=0.5, eps=1e-5):
     ground_truth = (ground_truth > threshold)
     intersect = (ground_truth & segmentation).sum().item()
     union = (ground_truth | segmentation).sum().item()
-    return 1 - (intersect + eps) / (union + eps)
+    return (intersect + eps) / (union + eps)
 
 
 def dice(ground_truth, segmentation, threshold=0.5, eps=1e-6):
@@ -65,7 +65,7 @@ def dice(ground_truth, segmentation, threshold=0.5, eps=1e-6):
     ground_truth = (ground_truth > threshold)
     intersect = (ground_truth & segmentation).sum().item()
     union = (ground_truth | segmentation).sum().item()
-    return 1 - (2*intersect + eps) / (intersect + union + eps)
+    return (2*intersect + eps) / (intersect + union + eps)
 
 
 def get_loss_func(loss_func="BCE"):
@@ -91,15 +91,15 @@ def test(args, dl, writer, model, image_shapes):
     img_i = 0
     temp = image_shapes.pop(0)
     img_shape = temp[1][0]
-    patient = temp[0]
+    patient = temp[0].replace("_", "/")
 
     print(os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")))
     print(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
 
-    # if os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")):
-    #     _, metadata = read_image(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
-    # else: 
-    #     _, metadata = read_image(os.path.join(args.root_dir, "patients", patient, "CT1.nii"))
+    if os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")):
+        _, metadata = read_image(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
+    else: 
+        _, metadata = read_image(os.path.join(args.root_dir, "patients", patient, "CT1.nii"))
 
     print(patient.replace("/", "_"))
 
@@ -107,7 +107,7 @@ def test(args, dl, writer, model, image_shapes):
     for i, (X, Y) in enumerate(dl):
         if img_i >= img_shape and args.save_3d:
             img_i = 0
-            print("NEW IMAGE")
+            print("NEW IMAGE", patient)
 
             y_bladder = torch.stack(segmentations["y_bladder"])
             y_cervix = torch.stack(segmentations["y_cervix"])
@@ -118,9 +118,6 @@ def test(args, dl, writer, model, image_shapes):
             write_image(seg_cervix_uterus,
                     "testing/{}_seg_cervix_uterus.nrrd".format(patient.replace("/", "_")), metadata=metadata)
 
-            print(y_bladder.shape, type(y_bladder), seg_bladder.shape, type(seg_bladder))
-            pickle.dump((y_bladder, seg_bladder), open("temp.p", 'wb'))
-
             print("IoU bladder:", iou(y_bladder, seg_bladder, threshold=0.8))
             print("IoU cervix/uterus:", iou(y_cervix, seg_cervix_uterus, threshold=0.8))
             print("Dice bladder:", dice(y_bladder, seg_bladder, threshold=0.8))
@@ -129,7 +126,7 @@ def test(args, dl, writer, model, image_shapes):
             segmentations = {0: [], 1: [], "y_bladder": [], "y_cervix": []}
             temp = image_shapes.pop(0)
             img_shape = temp[1][0]
-            patient = temp[0]
+            patient = temp[0].replace("_", "/")
 
             if os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")):
                 _, metadata = read_image(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
@@ -140,7 +137,6 @@ def test(args, dl, writer, model, image_shapes):
         torch.cuda.empty_cache()
         # pdb.set_trace()
         X, Y = X.to(device).float(), Y.to(device).float()
-        # X = X_2 - 0.7 #normalization
 
         torch.cuda.empty_cache()
         Y_hat = model(X - 0.1)
@@ -180,7 +176,7 @@ def main(args):
     image_shapes = pickle.load(open("files_test.p", 'rb'))
     
     transform = transforms.Compose([Clip(), NormalizeHV()])
-    ds = CTDataset(image_shapes, transform=transform)
+    ds = CTDataset(image_shapes, transform=transform, n_slices=21)
     if args.save_3d:
         dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=12)
         # _, metadata = read_image("/data/cervix/converted/CervixLoP-1/full/CT.nrrd")
@@ -191,8 +187,8 @@ def main(args):
     writer = SummaryWriter()
     
     print("Loading Model...")
-    # model = ResBlockUnet(1, 3, (1, 512, 512))
-    model = UNetResBlocks()
+    model = ResBlockUnet(1, 3, (1, 512, 512))
+    # model = UNetResBlocks()
     model.load_state_dict(torch.load(open(args.model_file, 'rb')))
     print("Model loaded!")
     model.to(device)

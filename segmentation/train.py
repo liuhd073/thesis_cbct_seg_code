@@ -19,6 +19,14 @@ from preprocess import Clip, NormalizeHV, GaussianAdditiveNoise
 from utils.plotting import plot_2d
 from mini_model import UNetResBlocks  # , UNet
 import time
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler(sys.stdout)
+formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(name)s : %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 
 def get_loss_func(loss_func="BCE"):
@@ -33,11 +41,11 @@ def get_loss_func(loss_func="BCE"):
 
 
 def get_model(args, device):
-    print("Loading Model...")
+    logger.info("Loading Model...")
     model = ResBlockUnet(1, 3, (1, 512, 512), use_group_norm=args.use_group_norm)
     if args.load_model:
         model.load_state_dict(torch.load(open(args.model_file, 'rb')))
-        print("Model loaded!")
+        logger.info("Model loaded!")
     model.to(device)
 
     return model
@@ -106,7 +114,7 @@ def evaluate(dl_val, writer, model, device, criterion, j, max_iters=None):
             break
         X, Y = X.to(device).float(), Y.to(device).float()
         X = X - dataset_mean
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
         if args.mc_train:
             if len(Y.argmax(1).unique()) < 2:
                 continue
@@ -114,6 +122,7 @@ def evaluate(dl_val, writer, model, device, criterion, j, max_iters=None):
         if args.equal_train:
             if len(Y.argmax(1).unique()) < 2 and np.random.rand(1) > 0.25:
                 continue
+        torch.cuda.empty_cache()
         Y_hat = model(X)
         if args.loss_func == "NLL":
             Y_hat = softmax(Y_hat)
@@ -170,20 +179,20 @@ def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true
         neptune.send_metric("loss/train", true_i, losses["train"][-1])
 
         if true_i % args.eval_every == 0:
-            eval_loss = evaluate(dl_val, writer, model, device, criterion, j)
+            eval_loss = evaluate(dl_val, writer, model, device, criterion, j, max_iters=250)
             writer.add_scalar("loss/validation", eval_loss, true_i)
             neptune.send_metric("loss/validation", true_i, eval_loss)
-            print("Iteration: {}/{} Validation Loss: {}".format(true_i,
+            logger.info("Iteration: {}/{} Validation Loss: {}".format(true_i,
                                                             args.max_iters, eval_loss))
             if eval_loss < losses["best"]:
                 losses["best"] = eval_loss
                 model_fn = args.model_dir / "best_model_{}.pt".format(args.loss_func)
                 torch.save(model.state_dict(), model_fn)
-                print("Best model saved: best_model_{}.pt".format(args.loss_func))
+                logger.info("Best model saved: best_model_{}.pt".format(args.loss_func))
             losses["validation"].append(eval_loss)
 
         if true_i % args.print_every == 0:
-            print("True Iteration: {} Epoch: {}/{} Iteration: {}/{} Loss: {}".format(true_i, j,
+            logger.info("True Iteration: {} Epoch: {}/{} Iteration: {}/{} Loss: {}".format(true_i, j,
                                                                   args.max_epochs, i, len(dl), sum(tmp_losses)/len(tmp_losses)))
             tmp_losses = []
             if args.save_imgs:
@@ -193,7 +202,7 @@ def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true
             # Save Model
             model_fn = args.model_dir / "model_{}_{}.pt".format(true_i, args.loss_func)
             torch.save(model.state_dict(), model_fn)
-            print("Model saved in model_{}_{}.pt".format(true_i, args.loss_func))
+            logger.info("Model saved in model_{}_{}.pt".format(true_i, args.loss_func))
             if true_i >= args.max_iters:
                 exit(1)
 
@@ -212,21 +221,21 @@ def main(args):
     files_val = pickle.load(
         open("files_validation.p", 'rb'))  # validation
 
-    preprocess = transforms.Compose([Clip(), NormalizeHV()])
-    augmentation = transforms.Compose([GaussianAdditiveNoise(0, 0.1)])
-    ds = CTDataset(files_train, preprocess=preprocess, augmentation=augmentation)
+    transform = transforms.Compose([GaussianAdditiveNoise(0, 0.01), Clip(), NormalizeHV()])
+    ds = CTDataset(files_train, transform=transform)
     dl = DataLoader(ds, batch_size=1, shuffle=args.shuffle, num_workers=12)
 
-    ds_val = CTDataset(files_val, preprocess=preprocess, augmentation=augmentation)
+    ds_val = CTDataset(files_val, transform=transform)
     dl_val = DataLoader(ds_val, batch_size=1, shuffle=args.shuffle, num_workers=12)
 
     writer = SummaryWriter()
 
     # model = UNetResBlocks().to(device)
     model = get_model(args, device)
-    print("Model Loaded")
+    logger.info("Model Loaded")
     optimizer = Adam(model.parameters(), lr=args.lr)
     # TODO: Add LR scheduler
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=25, gamma=0.1)
 
     criterion = get_loss_func(args.loss_func)
 
@@ -243,18 +252,19 @@ def main(args):
         
     losses = {"train": all_losses, "validation": eval_losses, "best": best_loss}
 
-    print("Start Training...")
+    logger.info("Start Training...")
     true_i = 1
     for j in range(args.max_epochs):
         losses, true_i = train(model, dl, dl_val, optimizer,
                                criterion, args, writer, device, j, true_i, losses)
 
+        scheduler.step()
         loss_fn = args.loss_dir / "losses.p"
         pickle.dump(losses["train"], open(loss_fn, 'wb'))
         loss_fn = args.loss_dir / "losses_val.p"
         pickle.dump(losses["validation"], open(loss_fn, 'wb'))
 
-    print("End training, save final model...")
+    logger.info("End training, save final model...")
     writer.flush()
     torch.save(model.state_dict(), "final_model.pt")
 
@@ -310,14 +320,14 @@ def parse_args():
 
 def get_params(args):
     PARAMS = {}
-    PARAMS["Model"] = "3D U-Net + ResNet, max pooling"
+    PARAMS["Model"] = "3D U-Net + ResNet"
     PARAMS["shuffle"] = args.shuffle
     PARAMS["Equal_train"] = args.equal_train
     PARAMS["Top_k"] = args.topk
     PARAMS["Save_every"] = args.save_every
     PARAMS["Eval_every"] = args.eval_every
     PARAMS["Learning_Rate"] = args.lr
-    PARAMS["Pooling"] = "max"
+    PARAMS["Pooling"] = "avg"
     return PARAMS
 
 
