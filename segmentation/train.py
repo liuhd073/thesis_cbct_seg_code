@@ -6,7 +6,7 @@ import neptune
 import numpy as np
 import matplotlib.pyplot as plt
 import torchvision.transforms as transforms
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 from torch.nn import functional as F
 import torch.nn as nn
 from torch.optim import Adam
@@ -28,6 +28,8 @@ handler = logging.StreamHandler(sys.stdout)
 formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(name)s : %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
+
+torch.backends.cudnn.benchmark = True
 
 
 def get_loss_func(loss_func="BCE"):
@@ -121,7 +123,7 @@ def evaluate(dl_val, writer, model, device, criterion, j, max_iters=None):
                 continue
 
         if args.equal_train:
-            if len(Y.argmax(1).unique()) < 2 and np.random.rand(1) > 0.25:
+            if len(Y.argmax(1).unique()) < 2 and np.random.rand(1) < 0.4:
                 continue
         torch.cuda.empty_cache()
         Y_hat = model(X)
@@ -129,8 +131,8 @@ def evaluate(dl_val, writer, model, device, criterion, j, max_iters=None):
             Y_hat = softmax(Y_hat)
         loss = criterion(Y_hat, Y.argmax(1)).mean()
         
-        if args.save_imgs:
-            _log_images(X, Y, Y_hat, i, writer, "validation")
+        # if args.save_imgs:
+        #     _log_images(X, Y, Y_hat, i, writer, "validation")
 
         losses.append(loss.detach().cpu().item())
         torch.cuda.empty_cache()
@@ -176,12 +178,12 @@ def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true
 
         losses["train"].append(loss.detach().cpu().item())
         tmp_losses.append(losses["train"][-1])
-        writer.add_scalar("loss/train", losses["train"][-1], true_i)
+        # writer.add_scalar("loss/train", losses["train"][-1], true_i)
         neptune.send_metric("loss/train", true_i, losses["train"][-1])
 
         if true_i % args.eval_every == 0:
             eval_loss = evaluate(dl_val, writer, model, device, criterion, j, max_iters=250)
-            writer.add_scalar("loss/validation", eval_loss, true_i)
+            # writer.add_scalar("loss/validation", eval_loss, true_i)
             neptune.send_metric("loss/validation", true_i, eval_loss)
             logger.info("Iteration: {}/{} Validation Loss: {}".format(true_i,
                                                             args.max_iters, eval_loss))
@@ -196,8 +198,8 @@ def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true
             logger.info("True Iteration: {} Epoch: {}/{} Iteration: {}/{} Loss: {}".format(true_i, j,
                                                                   args.max_epochs, i, len(dl), sum(tmp_losses)/len(tmp_losses)))
             tmp_losses = []
-            if args.save_imgs:
-                _log_images(X, Y, Y_hat, true_i, writer, "train")
+            # if args.save_imgs:
+            #     _log_images(X, Y, Y_hat, true_i, writer, "train")
 
         if true_i % args.save_every == 0:
             # Save Model
@@ -229,7 +231,8 @@ def main(args):
     ds_val = CTDataset(files_val, transform=transform)
     dl_val = DataLoader(ds_val, batch_size=1, shuffle=args.shuffle, num_workers=12)
 
-    writer = SummaryWriter()
+    # writer = SummaryWriter()
+    writer = None
 
     # model = UNetResBlocks().to(device)
     model = get_model(args, device)
@@ -338,7 +341,6 @@ if __name__ == "__main__":
     PARAMS = get_params(args)
     neptune.init('twagenaar/Thesis-CT-seg')
     neptune.create_experiment(name=args.experiment_name, params=PARAMS)
-    neptune.append_tag("running")
     main(args)
 
     neptune.remove_tag("running")
