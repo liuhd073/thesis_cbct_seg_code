@@ -3,91 +3,75 @@ Author: Tessa Wagenaar
 """
 
 from dataset import CTDataset
+from dataset_CBCT import CBCTDataset
 from preprocess import *
 from torch.utils.data import DataLoader
-from resblockunet import ResBlockUnet
-from torch.optim import Adam
 
 import torchvision.transforms as transforms
 from torch.utils.tensorboard import SummaryWriter
-from torch.nn import functional as F
-import torch.nn as nn
 
-import matplotlib.pyplot as plt
+from tqdm import tqdm
 
-import argparse
 import pickle
+import argparse
 import torch
-import os
 import logging
 import sys
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 handler = logging.StreamHandler(sys.stdout)
-formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(name)s : %(message)s')
+formatter = logging.Formatter(
+    '%(asctime)s : %(levelname)s : %(name)s : %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-def train(args):
-    j=0
+
+def test(args):
     writer = SummaryWriter()
-    files_train = pickle.load(open("files_test.p", 'rb'))
-    preprocess = transforms.Compose([Clip(), NormalizeHV()])
-    augmentation = transforms.Compose([GaussianAdditiveNoise(0, 20), Clip(), NormalizeHV()])
-    # augmentation = transforms.Compose([Identity()])
-    ds = CTDataset(files_train, preprocess=preprocess, augmentation=augmentation)
-    dl = DataLoader(ds, batch_size=1, shuffle=True, num_workers=1)
+    files_train = pickle.load(open("files_CBCT.p", 'rb'))
+    # transform = transforms.Compose(
+    #     [GaussianAdditiveNoise(0, 20), Clip(), NormalizeHV()])
+    transform = transforms.Compose(
+        [NormalizeIMG()])
+    ds = CBCTDataset(files_train, transform=transform)
+    # dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=6)
     seg_slices = 0
     no_seg_slices = 0
 
-    for i, (X, Y) in enumerate(dl):
-        logger.info("{}/{} X: {} Y: {}".format(i, len(dl), X.shape, Y.shape))
-        # print("{} {}/{} X: {} Y: {}".format(j, i, len(dl), X.shape, Y.shape))
+    for i in range(10, len(ds), 100):
+    # for i, (X, Y) in enumerate(dl):
+        X, Y = ds.__getitem__(i)
+        X, Y = torch.tensor(X).unsqueeze(0), torch.tensor(Y).unsqueeze(0)
+        logger.info("{}/{} X: {} Y: {}".format(i, len(ds), X.shape, Y.shape))
         if len(Y.argmax(1).unique()) < 2:
             no_seg_slices += 1
-        else: 
+        else:
             seg_slices += 1
 
         logger.debug("Unique:".format(Y.argmax(1).unique()))
-        # print("Unique:", Y.argmax(1).unique())
-    
+
         writer.add_image(
             "dataset_test/bladder", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
         writer.add_image(
             "dataset_test/cervix_uterus", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
         writer.add_image(
             "dataset_test/other", Y[:, 2, :, :, :].squeeze(), i, dataformats="HW")
-        writer.add_image( 
+        writer.add_image(
             "dataset_test/X", X[:, :, X.shape[2]//2, :, :].squeeze(), i, dataformats="HW")
 
     print("Seg slices:", seg_slices)
     print("No seg slices:", no_seg_slices)
 
 
-    # image_shapes = pickle.load(open("extra_CT_shapes_validation.p", 'rb'))
-    # ds = ExtraCervixDataset("/data/cervix/converted", image_shapes, transform=transform)
-    # dl = DataLoader(ds, batch_size=1, shuffle=False)
-
-    # for i, (X, Y) in enumerate(dl):
-    #     print("{} {}/{} X: {} Y: {}".format(j, i, len(dl), X.shape, Y.shape))
-    #     # writer.add_image(
-    #     #     "images_true/0", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
-    #     # writer.add_image(
-    #     #     "images_true/1", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
-    #     # writer.add_image(
-    #     #     "images_true/2", Y[:, 2, :, :, :].squeeze(), i, dataformats="HW")
-    #     # writer.add_image( 
-    #     #     "images_true/X", X[:, :, 10:11, :, :].squeeze(), i, dataformats="HW")
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Get data shapes')
+    parser = argparse.ArgumentParser(description='Test Dataset')
 
     parser.add_argument("-root_dir", help="Get root directory of data",
-                        default="/data/cervix/patients", required=False)
+                        default="/data/cervix", required=False)
 
     args = parser.parse_args()
 
     print(args)
 
-    train(args)
+    test(args)

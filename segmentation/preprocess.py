@@ -7,7 +7,6 @@ import torch
 from scipy.ndimage.interpolation import zoom
 from skimage.transform import rotate, rescale
 import random
-import cv2
 
 from utils.bbox import extend_bbox, crop_to_bbox, combine_bbox
 MIN_HV = -100

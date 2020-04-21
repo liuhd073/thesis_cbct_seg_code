@@ -237,7 +237,7 @@ class UpsampleBlock(nn.Module):
         if upscale:
             if mode in ['bilinear', 'nearest']:
                 self.up = lambda x_in: torch.nn.functional.interpolate(
-                    x_in, mode=mode, scale_factor=us_ker, align_corners=False)
+                    x_in, mode=mode, scale_factor=us_ker, align_corners=False, recompute_scale_factor=True)
             else:
                 raise NotImplementedError("Mode {} not available.".format(mode))
 
