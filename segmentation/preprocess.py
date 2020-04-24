@@ -13,12 +13,14 @@ MIN_HV = -100
 MAX_HV = 300
 
 
-class Clip(object):
-    def __init__(self):
-        pass
+class ClipAndNormalize(object):
+    def __init__(self, minimum, maximum):
+        self.minimum = minimum
+        self.maximum = maximum
 
     def __call__(self, sample):
-        sample["image"] = np.clip(sample["image"], MIN_HV, MAX_HV)
+        sample["image"] = np.clip(sample["image"], self.minimum, self.maximum)
+        sample["image"] = (sample["image"] - self.minimum) / (self.maximum - self.minimum)
         return sample
 
 

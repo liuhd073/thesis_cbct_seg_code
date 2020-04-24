@@ -5,6 +5,7 @@ Author: Tessa Wagenaar
 from dataset import CTDataset
 from dataset_CBCT import CBCTDataset
 from preprocess import *
+from utils.plotting import plot_2d
 from torch.utils.data import DataLoader
 
 import torchvision.transforms as transforms
@@ -26,14 +27,32 @@ formatter = logging.Formatter(
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
+def _log_images(X, Y, i, writer, tag="test_dataset"):
+    middle_slice = X.shape[2] // 2
+    img_arr = X[0, 0, middle_slice, :, :].detach().cpu()
+    seg_arr_bladder = Y[:, 0, :, :, :].squeeze().detach().cpu()
+    seg_arr_cervix = Y[:, 1, :, :, :].squeeze().detach().cpu()
+
+    masked_img_bladder = np.array(
+        plot_2d(img_arr, mask=seg_arr_bladder, mask_color="g", mask_threshold=0.5))
+    masked_img_cervix = np.array(
+        plot_2d(img_arr, mask=seg_arr_cervix, mask_color="g", mask_threshold=0.5))
+
+    writer.add_image(
+        f"{tag}/bladder_gt", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+    writer.add_image(
+        f"{tag}/cervix_gt", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+    writer.add_image(
+        f"{tag}/mask_bladder", masked_img_bladder, i, dataformats="HWC")
+    writer.add_image(
+        f"{tag}/mask_cervix", masked_img_cervix, i, dataformats="HWC")
+
 
 def test(args):
     writer = SummaryWriter()
     files_train = pickle.load(open("files_CBCT.p", 'rb'))
-    # transform = transforms.Compose(
-    #     [GaussianAdditiveNoise(0, 20), Clip(), NormalizeHV()])
     transform = transforms.Compose(
-        [NormalizeIMG()])
+        [ClipAndNormalize(-200, 500)]) 
     ds = CBCTDataset(files_train, transform=transform)
     # dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=6)
     seg_slices = 0
@@ -51,15 +70,7 @@ def test(args):
 
         logger.debug("Unique:".format(Y.argmax(1).unique()))
 
-        writer.add_image(
-            "dataset_test/bladder", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
-        writer.add_image(
-            "dataset_test/cervix_uterus", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
-        writer.add_image(
-            "dataset_test/other", Y[:, 2, :, :, :].squeeze(), i, dataformats="HW")
-        writer.add_image(
-            "dataset_test/X", X[:, :, X.shape[2]//2, :, :].squeeze(), i, dataformats="HW")
-
+        _log_images(X, Y, i, writer)
     print("Seg slices:", seg_slices)
     print("No seg slices:", no_seg_slices)
 
