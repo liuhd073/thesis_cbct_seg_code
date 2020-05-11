@@ -4,6 +4,7 @@ Author: Tessa Wagenaar
 
 from dataset import CTDataset
 from dataset_CBCT import CBCTDataset
+from dataset_combined import CombinedDataset
 from preprocess import *
 from utils.plotting import plot_2d
 from torch.utils.data import DataLoader
@@ -50,25 +51,29 @@ def _log_images(X, Y, i, writer, tag="test_dataset"):
 
 def test(args):
     writer = SummaryWriter()
-    files_train = pickle.load(open("files_CBCT.p", 'rb'))
-    transform = transforms.Compose(
-        [ClipAndNormalize(-200, 500)]) 
-    ds = CBCTDataset(files_train, transform=transform)
-    # dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=6)
+    files_CBCT = pickle.load(open("files_CBCT_clipped.p", 'rb'))
+    files_CT = pickle.load(open("files_CT_clipped.p", 'rb'))
+    transform_CBCT= transforms.Compose(
+        [GaussianAdditiveNoise(0, 10), ClipAndNormalize(700, 1600)])#, RandomElastic((21,512,512))])
+    ds_CBCT = CBCTDataset(files_CBCT, transform=transform_CBCT)
+    transform_CT= transforms.Compose(
+        [GaussianAdditiveNoise(0, 10), ClipAndNormalize(-100, 300)])#, RandomElastic((21,512,512))])
+    ds_CT = CTDataset(files_CT, transform=transform_CT)
+    ds_combined = CombinedDataset(ds_CT, ds_CBCT)
+    dl = DataLoader(ds_combined, batch_size=1, shuffle=False, num_workers=12)
+    
     seg_slices = 0
     no_seg_slices = 0
 
-    for i in range(10, len(ds), 100):
-    # for i, (X, Y) in enumerate(dl):
-        X, Y = ds.__getitem__(i)
-        X, Y = torch.tensor(X).unsqueeze(0), torch.tensor(Y).unsqueeze(0)
-        logger.info("{}/{} X: {} Y: {}".format(i, len(ds), X.shape, Y.shape))
+    for i, (X, Y) in enumerate(dl):
+        logger.info("{}/{} X: {} Y: {}".format(i, len(ds_combined), X.shape, Y.shape))
         if len(Y.argmax(1).unique()) < 2:
             no_seg_slices += 1
         else:
             seg_slices += 1
 
         logger.debug("Unique:".format(Y.argmax(1).unique()))
+        logger.debug(f"Min: {X.min()}, Max: {X.max()}")
 
         _log_images(X, Y, i, writer)
     print("Seg slices:", seg_slices)
@@ -82,7 +87,5 @@ if __name__ == "__main__":
                         default="/data/cervix", required=False)
 
     args = parser.parse_args()
-
-    print(args)
 
     test(args)

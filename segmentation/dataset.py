@@ -8,7 +8,6 @@ from torch.utils.data import Dataset
 from utils.bbox import crop_to_bbox
 from utils.image_readers import read_image
 from utils.io import read_object, save_object
-from preprocess import NormalizeIMG
 
 import numpy as np
 
@@ -76,8 +75,8 @@ class CTDataset(Dataset):
                 # segmentation = np.expand_dims(segmentation, axis=0)
             # if self.preprocess:
             #     image = self.preprocess(image)
-            save_object(image, cache_fn)
-            save_object(segmentation, cache_fn_seg)
+            # save_object(image, cache_fn)
+            # save_object(segmentation, cache_fn_seg)
 
         return image, segmentation
 
