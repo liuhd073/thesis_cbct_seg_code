@@ -50,12 +50,12 @@ class CBCTDataset(Dataset):
         else:
             image_path, segmentation_paths = self.data[patient]
             image = read_image(image_path, no_meta=True)
+            segmentation = self._get_segmentation(segmentation_paths)
             if not self.clipped:
                 keep = [i % 3 ==0 for i in range(256)]
                 image = image[:,keep,:]
+                segmentation = segmentation[:,keep,:,:]
             image = image.swapaxes(0,1)
-            
-            segmentation = self._get_segmentation(segmentation_paths)
             assert (
                 image.shape == segmentation.shape[1:]
             ), "image and segmentation should be of same shape in dataset!"
