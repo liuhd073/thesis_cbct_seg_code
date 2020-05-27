@@ -105,10 +105,10 @@ class CTDataset(Dataset):
         im_slice = crop_to_bbox(self.image, (0, slice_idx - middle_slice, start, start, 1, self.n_slices, 512, 512))
         seg_slice = crop_to_bbox(self.segmentation, (0, slice_idx, start, start, 3, 1, 512, 512))
 
-        sample = {"image": im_slice, "target": seg_slice}
+        sample = {"image": im_slice.squeeze(0), "target": seg_slice.squeeze(1)}
         sample = self.transform(sample)
-        im_slice = sample["image"]
-        seg_slice = sample["target"]
+        im_slice = np.expand_dims(sample["image"],0)
+        seg_slice = np.expand_dims(sample["target"],1)
 
         assert (
             0 not in seg_slice.shape

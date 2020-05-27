@@ -1,35 +1,37 @@
 import pickle
-import pdb
-import os
 import torch
 import argparse
-import matplotlib.pyplot as plt
 import numpy as np
+from pathlib import Path
 import torchvision.transforms as transforms
 from torch.utils.tensorboard import SummaryWriter
-from torch.nn import functional as F
 import torch.nn as nn
 from utils.image_readers import read_image
 from utils.image_writers import write_image
 from utils.plotting import plot_2d
 from resblockunet import ResBlockUnet
 from torch.utils.data import DataLoader
-from preprocess import Clip, NormalizeHV
+from preprocess import ClipAndNormalize, GaussianAdditiveNoise
 from dataset import CTDataset
+from dataset_CBCT import CBCTDataset
 from mini_model import UNetResBlocks
+from datetime import datetime
+from utils.nikolov_metrics import *
 
-import sys 
+import sys
 import logging
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 handler = logging.StreamHandler(sys.stdout)
-formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(name)s : %(message)s')
+formatter = logging.Formatter(
+    '%(asctime)s : %(levelname)s : %(name)s : %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
 torch.backends.cudnn.benchmark = True
+
 
 def _log_images(X, Y, Y_hat, i, writer, tag="train"):
     middle_slice = X.shape[2] // 2
@@ -88,6 +90,19 @@ def get_loss_func(loss_func="BCE"):
         return nn.NLLLoss(weight=weights)
 
 
+def calculate_metrics(mask_gt, mask_pred, spacing_mm, percent, tolerances):
+
+    metrics = {}
+    surface_distances = compute_surface_distances(mask_gt, mask_pred, spacing_mm)
+    metrics["avg_surface_distance"] = compute_average_surface_distance(surface_distances)
+    metrics["robust_hausdorff"] = compute_robust_hausdorff(surface_distances, percent)
+    for tolerance_mm in tolerances:
+        metrics[f"surface_overlap_tolerance_{tolerance_mm}"] = compute_surface_overlap_at_tolerance(surface_distances, tolerance_mm)
+        metrics[f"surface_dice_tolerance_{tolerance_mm}"] = compute_surface_dice_at_tolerance(surface_distances, tolerance_mm)
+    metrics["dice"] = compute_dice_coefficient(mask_gt, mask_pred)
+    return metrics
+
+
 def test(args, dl, writer, model, image_shapes):
     device = "cuda"  # Run on GPU
 
@@ -95,7 +110,6 @@ def test(args, dl, writer, model, image_shapes):
     softmax = nn.LogSoftmax(1)
 
     logger.info("Start Testing...")
-    img_losses = []
     tmp_losses = []
 
     segmentations = {0: [], 1: [], "y_bladder": [], "y_cervix": []}
@@ -104,43 +118,51 @@ def test(args, dl, writer, model, image_shapes):
 
     img_i = 0
     temp = image_shapes.pop(0)
-    img_shape = temp[1][0]
+    # img_shape = temp[1][1]
+    img_shape = 256
     patient = temp[0].replace("_", "/")
 
-    logger.debug(os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")))
-    logger.debug(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
-
-    if os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")):
-        _, metadata = read_image(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
-    else: 
-        _, metadata = read_image(os.path.join(args.root_dir, "patients", patient, "CT1.nii"))
+    _, metadata = read_image(str(temp[2]))
 
     logger.debug(patient.replace("/", "_"))
 
+    all_zeros = 0
+    seg_slices = 0
+
+    model.eval()
     for i, (X, Y) in enumerate(dl):
-
-
-        torch.cuda.empty_cache()
-        # pdb.set_trace()
         X, Y = X.to(device).float(), Y.to(device).float()
 
         torch.cuda.empty_cache()
-        Y_hat = model(X - 0.1)
+        Y_hat = model(X)
         assert Y_hat.shape == Y.shape, "output and classification must be same shape, {}, {}".format(
             Y_hat.shape, Y.shape)
 
         if args.save_3d:
-            segmentations["y_bladder"].append(Y[:, 0, :, :, :].squeeze().detach().cpu())
-            segmentations["y_cervix"].append(Y[:, 1, :, :, :].squeeze().detach().cpu())
+            segmentations["y_bladder"].append(
+                Y[:, 0, :, :, :].squeeze().detach().cpu())
+            segmentations["y_cervix"].append(
+                Y[:, 1, :, :, :].squeeze().detach().cpu())
 
         Y_hat = softmax(Y_hat)
         loss = criterion(Y_hat, Y.argmax(1))
         tmp_losses.append(loss.detach().cpu().item())
-        # writer.add_scalar("loss/train", loss.item(), j * len(dl) + i)
 
-        segmentations[0].append(Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu() > 0.8)
-        segmentations[1].append(Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu() > 0.8)
-        
+        if len(Y.argmax(1).unique()) > 1:
+            seg_slices += 1
+            logger.debug(f"Add segmentation: {seg_slices}") 
+            segmentations[0].append(
+                Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu() > 0.5)
+            segmentations[1].append(
+                Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu() > 0.5)
+        else:
+            all_zeros += 1
+            logger.debug(f"Add zeros: {all_zeros}")
+            segmentations[0].append(
+                Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu() > 2.0)
+            segmentations[1].append(
+                Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu() > 2.0)
+
         img_i += 1
 
         if img_i >= img_shape and args.save_3d:
@@ -150,35 +172,39 @@ def test(args, dl, writer, model, image_shapes):
             y_bladder = torch.stack(segmentations["y_bladder"])
             y_cervix = torch.stack(segmentations["y_cervix"])
             seg_bladder = torch.stack(segmentations[0]).int()
-            seg_cervix_uterus = torch.stack(segmentations[1]).int()
+            seg_cervix = torch.stack(segmentations[1]).int()
+            write_image(seg_bladder.transpose(0,1)[56:456,:,56:456], "testing/{}_seg_bladder.nrrd".format(
+                patient.replace("/", "_")), metadata=metadata)
+            write_image(seg_cervix.transpose(0,1)[56:456,:,56:456],
+                        "testing/{}_seg_cervix_uterus.nrrd".format(patient.replace("/", "_")), metadata=metadata)
+            print(type(y_bladder.detach().cpu().numpy()), y_bladder.detach().cpu().shape, y_bladder.detach().cpu().numpy().astype(bool).sum())
+            metrics_bladder = calculate_metrics(y_bladder.transpose(0,1)[56:456,:,56:456].detach().cpu().numpy().astype(bool), seg_bladder.transpose(0,1)[56:456,:,56:456].detach().cpu().numpy().astype(bool), metadata["spacing"], 25.0, [0.5, 1.0, 1.5, 3.0])
+            metrics_cervix = calculate_metrics(y_cervix.transpose(0,1)[56:456,:,56:456].detach().cpu().numpy().astype(bool), seg_cervix.transpose(0,1)[56:456,:,56:456].detach().cpu().numpy().astype(bool), metadata["spacing"], 25.0, [0.5, 1.0, 1.5, 3.0])
 
-            write_image(seg_bladder, "testing/{}_seg_bladder.nrrd".format(patient.replace("/", "_")), metadata=metadata)
-            write_image(seg_cervix_uterus,
-                    "testing/{}_seg_cervix_uterus.nrrd".format(patient.replace("/", "_")), metadata=metadata)
-
-            logger.info(f"IoU bladder: {iou(y_bladder, seg_bladder, threshold=0.8)}")
-            logger.info(f"IoU cervix/uterus: {iou(y_cervix, seg_cervix_uterus, threshold=0.8)}")
-            logger.info(f"Dice bladder: {dice(y_bladder, seg_bladder, threshold=0.8)}")
-            logger.info(f"Dice cervix/uterus: {dice(y_cervix, seg_cervix_uterus, threshold=0.8)}")
-
+            for m, v in metrics_bladder.items():
+                logger.info(f"{m} bladder: {v}")
+            for m, v in metrics_cervix.items():
+                logger.info(f"{m} cervix: {v}")
+            
             segmentations = {0: [], 1: [], "y_bladder": [], "y_cervix": []}
             temp = image_shapes.pop(0)
-            img_shape = temp[1][0]
-            patient = temp[0].replace("_", "/")
-
-            if os.path.exists(os.path.join(args.root_dir, "converted", patient, "CT.nrrd")):
-                _, metadata = read_image(os.path.join(args.root_dir, "converted", patient, "CT.nrrd"))
-            else: 
-                _, metadata = read_image(os.path.join(args.root_dir, "patients", patient, "CT1.nii"))
+            if not temp is None:
+                # img_shape = temp[1][1]
+                img_shape = 256
+                patient = temp[0].replace("_", "/")
+                CT_path = temp[2]
+                if CT_path.exists():
+                    _, metadata = read_image(str(CT_path))
+            
 
         torch.cuda.empty_cache()
 
         _log_images(X, Y, Y_hat, i, writer, tag="test")
 
         if img_i % args.print_every == 0:
-            logger.info("Iteration: {}/{} Loss: {}".format(i, len(dl), sum(tmp_losses)/len(tmp_losses)))
+            logger.info("Iteration: {}/{} Loss: {}".format(i,
+                                                           len(dl), sum(tmp_losses)/len(tmp_losses)))
             tmp_losses = []
-
 
     writer.flush()
     logger.info("End testing")
@@ -186,31 +212,29 @@ def test(args, dl, writer, model, image_shapes):
 
 def main(args):
     device = "cuda"
-    # Dataset for ONE CT image
-    image_shapes = pickle.load(open("files_test.p", 'rb'))
-    
-    transform = transforms.Compose([GaussianAdditiveNoise(0, 20), Clip(), NormalizeHV()])
-    ds = CTDataset(image_shapes, transform=transform, n_slices=21)
+    image_shapes = pickle.load(open("files_CBCT_test.p", 'rb'))
+
+    transform_CBCT= transforms.Compose(
+        [ClipAndNormalize(700, 1600)])#, RandomElastic((21,512,512))])
+    ds = CBCTDataset(image_shapes, transform=transform_CBCT, n_slices=21, clipped=True)
     if args.save_3d:
         dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=12)
         # _, metadata = read_image("/data/cervix/converted/CervixLoP-1/full/CT.nrrd")
         # print(metadata)
-    else: 
+    else:
         dl = DataLoader(ds, batch_size=1, shuffle=True, num_workers=12)
 
     writer = SummaryWriter()
-    
+
     logger.info("Loading Model...")
     model = ResBlockUnet(1, 3, (1, 512, 512))
-    # model = UNetResBlocks()
     model.load_state_dict(torch.load(open(args.model_file, 'rb')))
     logger.info("Model loaded!")
     model.to(device)
     model.eval()
 
-    pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-    logger.debug(pytorch_total_params)
+    pytorch_total_params = sum(p.numel()
+                               for p in model.parameters() if p.requires_grad)
 
     test(args, dl, writer, model, image_shapes)
 
@@ -228,10 +252,9 @@ def parse_args():
                         default=10, required=False, type=int)
     parser.add_argument("-save_3d", help="Save 3D segmentations",
                         default=False, required=False, action="store_true")
-    
 
     args = parser.parse_args()
-
+    args.root_dir = Path(args.root_dir)
     return args
 
 
