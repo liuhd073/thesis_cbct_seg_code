@@ -27,7 +27,7 @@ _SITK_INTERPOLATOR_DICT = {
 
 
 def resample_sitk_image(sitk_image, spacing=None, interpolator=None,
-                        fill_value=0):
+                        ref_image=None, affine_matrix=None, fill_value=0):
     """Resamples an ITK image to a new grid. If no spacing is given,
     the resampling is done isotropically to the smallest value in the current
     spacing. This is usually the in-plane resolution. If not given, the
@@ -67,7 +67,16 @@ def resample_sitk_image(sitk_image, spacing=None, interpolator=None,
     orig_spacing = np.array(sitk_image.GetSpacing())
     orig_size = np.array(sitk_image.GetSize(), dtype=np.int)
 
-    if not spacing:
+    if not ref_image is None: 
+        new_origin = ref_image.GetOrigin()
+        new_direction = ref_image.GetDirection()
+    else: 
+        new_origin = orig_origin
+        new_direction = orig_direction
+
+    if not ref_image is None:
+        new_spacing = ref_image.GetSpacing()
+    elif not spacing:
         min_spacing = orig_spacing.min()
         new_spacing = [min_spacing]*num_dim
     else:
@@ -78,28 +87,43 @@ def resample_sitk_image(sitk_image, spacing=None, interpolator=None,
 
     sitk_interpolator = _SITK_INTERPOLATOR_DICT[interpolator]
 
-    new_size = orig_size*(orig_spacing/new_spacing)
-    new_size = np.ceil(new_size).astype(np.int)  # Image dimensions are in integers
-    # SimpleITK expects lists, not ndarrays
-    new_size = [int(s) if spacing[idx] else int(orig_size[idx]) for idx, s in enumerate(new_size)]
+    if ref_image is None:
+        new_size = orig_size*(orig_spacing/new_spacing)
+        new_size = np.ceil(new_size).astype(np.int)  # Image dimensions are in integers
+        # SimpleITK expects lists, not ndarrays
+        new_size = [int(s) if spacing[idx] else int(orig_size[idx]) for idx, s in enumerate(new_size)]
+    else: 
+        new_size = ref_image.GetSize()
 
+    if not affine_matrix is None and False:
+        translation = sitk.TranslationTransform(3)
+        translation.SetOffset(affine_matrix[:3,3].ravel())
+
+        affine = sitk.AffineTransform(3)
+        affine.SetMatrix(affine_matrix[:3,:3].ravel())
+
+        transform = sitk.Transform(3, sitk.sitkComposite)
+        transform.AddTransform(affine)
+        transform.AddTransform(translation)
+    else:
+        transform = sitk.Transform()
+    
     resample_filter = sitk.ResampleImageFilter()
     resampled_sitk_image = resample_filter.Execute(
         sitk_image,
         new_size,
-        sitk.Transform(),
+        transform,
         sitk_interpolator,
-        orig_origin,
+        new_origin,
         new_spacing,
-        orig_direction,
+        new_direction,
         fill_value,
         orig_pixelid
     )
 
     return resampled_sitk_image, orig_spacing
 
-
-def read_image(filename, force_2d=False, dtype=None, no_meta=False, **kwargs):
+def read_image(filename, force_2d=False, dtype=None, no_meta=False, affine_matrix=None, ref_fn=None, **kwargs):
     """Read medical image
 
     Parameters
@@ -132,13 +156,19 @@ def read_image(filename, force_2d=False, dtype=None, no_meta=False, **kwargs):
         image, metadata = read_dcm(filename, **kwargs)
     else:
         metadata = {}
+        if not ref_fn is None:
+            sitk_ref_image = sitk.ReadImage(str(ref_fn))
+        else: 
+            sitk_ref_image = None
         sitk_image = sitk.ReadImage(str(filename))
         orig_shape = sitk.GetArrayFromImage(sitk_image).shape
-        if new_spacing:
+        if new_spacing or not (affine_matrix is None):
             sitk_image, orig_spacing = resample_sitk_image(
                 sitk_image,
                 spacing=new_spacing,
                 interpolator=kwargs.get('interpolator', None),
+                ref_image=sitk_ref_image,
+                affine_matrix=affine_matrix,
                 fill_value=0
             )
             metadata.update(
