@@ -53,28 +53,18 @@ class CTDataset(Dataset):
     def _load_image(self, patient):
         cache_fn = self.cachedir / f"{patient}_CT1"
         cache_fn_seg = self.cachedir / f"{patient}_CT1_seg"
-        # print("Loading:", cache_fn)
         if cache_fn.exists() and cache_fn_seg.exists():
             image = read_object(cache_fn)
             segmentation = read_object(cache_fn_seg)
         else:
             image_path, segmentation_paths = self.data[patient]
             image = read_image(image_path, no_meta=True) #, spacing=(0.9765625, 0.9765625, 5))
-            # print(image.shape)
-            # image = crop_to_bbox(image, (0, start, start, image.shape[0], 512, 512))
-            if patient.isdigit():
-                image -= 1000
             segmentation = self._get_segmentation(segmentation_paths)
             
-            # assert (
-            #     image.shape == segmentation.shape[1:]
-            # ), "image and segmentation should be of same shape in dataset!"
             if len(image.shape) == 3:
                 # add "channels" dimension if it is not present
                 image = np.expand_dims(image, axis=0)
-                # segmentation = np.expand_dims(segmentation, axis=0)
-            # if self.preprocess:
-            #     image = self.preprocess(image)
+
             # save_object(image, cache_fn)
             # save_object(segmentation, cache_fn_seg)
 
@@ -98,7 +88,6 @@ class CTDataset(Dataset):
             self.image, self.segmentation = self._load_image(patient)
             self.current_patient = patient
 
-        # start = int((self.image_shapes[patient][1] - 512) / 2)
         start = 0
         middle_slice = self.n_slices // 2
 
