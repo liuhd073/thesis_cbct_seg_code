@@ -121,7 +121,8 @@ def resample_sitk_image(sitk_image, spacing=None, interpolator=None,
         orig_pixelid
     )
 
-    return resampled_sitk_image, orig_spacing
+    meta = {"orig_spacing": orig_spacing, "orig_origin": orig_origin, "orig_direction": orig_direction, "orig_shape": orig_size}
+    return resampled_sitk_image, meta
 
 def read_image(filename, force_2d=False, dtype=None, no_meta=False, affine_matrix=None, ref_fn=None, **kwargs):
     """Read medical image
@@ -163,7 +164,7 @@ def read_image(filename, force_2d=False, dtype=None, no_meta=False, affine_matri
         sitk_image = sitk.ReadImage(str(filename))
         orig_shape = sitk.GetArrayFromImage(sitk_image).shape
         if new_spacing or not (affine_matrix is None):
-            sitk_image, orig_spacing = resample_sitk_image(
+            sitk_image, meta_data = resample_sitk_image(
                 sitk_image,
                 spacing=new_spacing,
                 interpolator=kwargs.get('interpolator', None),
@@ -171,8 +172,7 @@ def read_image(filename, force_2d=False, dtype=None, no_meta=False, affine_matri
                 affine_matrix=affine_matrix,
                 fill_value=0
             )
-            metadata.update(
-                {'orig_spacing': tuple(orig_spacing), 'orig_shape': orig_shape})
+            metadata.update(meta_data)
         image = sitk.GetArrayFromImage(sitk_image)
         if force_2d:
             if image.ndim == 3 and image.shape[0] == 1:

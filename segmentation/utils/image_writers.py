@@ -7,7 +7,7 @@ from glob import glob
 from .image_readers import resample_sitk_image
 
 
-def write_image(data, filepath, compression=True, metadata=None, resample=False):
+def write_image(data, filepath, compression=True, metadata=None, resample=False, ref_fn=None):
     """
     Parameters
     ----------
@@ -27,7 +27,6 @@ def write_image(data, filepath, compression=True, metadata=None, resample=False)
     None
     TODO: Better catching of SimpleITK errors
     """
-
     possible_exts = ['nrrd', 'mhd', 'mha', 'nii', 'nii.gz', 'dcm']
     sitk_image = sitk.GetImageFromArray(data)
     # We need to set spacing, otherwise things go wrong.
