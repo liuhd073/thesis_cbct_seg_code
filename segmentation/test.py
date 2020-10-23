@@ -9,14 +9,16 @@ import torch.nn as nn
 from utils.image_readers import read_image
 from utils.image_writers import write_image
 from utils.plotting import plot_2d
-from resblockunet import ResBlockUnet
+from models.resblockunet import ResBlockUnet
 from torch.utils.data import DataLoader
-from preprocess import ClipAndNormalize, GaussianAdditiveNoise
+from preprocess import ClipAndNormalize
 from dataset import CTDataset
 from dataset_CBCT import CBCTDataset
-from mini_model import UNetResBlocks
+from dataset_duo import DuoDataset
 from datetime import datetime
 from utils.nikolov_metrics import *
+import skimage
+from skimage import measure
 
 import sys
 import logging
@@ -35,12 +37,12 @@ torch.backends.cudnn.benchmark = True
 
 def _log_images(X, Y, Y_hat, i, writer, tag="train"):
     middle_slice = X.shape[2] // 2
-    img_arr = X[0, 0, middle_slice, :, :].detach().cpu()
-    seg_arr_bladder = Y[:, 0, :, :, :].squeeze().detach().cpu()
-    seg_arr_cervix = Y[:, 1, :, :, :].squeeze().detach().cpu()
+    img_arr = X[0, 0, middle_slice, :, :].detach().cpu().numpy()
+    seg_arr_bladder = Y[:, 0, :, :, :].squeeze().detach().cpu().numpy()
+    seg_arr_cervix = Y[:, 1, :, :, :].squeeze().detach().cpu().numpy()
 
-    out_arr_bladder = Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu()
-    out_arr_cervix = Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu()
+    out_arr_bladder = Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu().numpy()
+    out_arr_cervix = Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu().numpy()
 
     masked_img_bladder = np.array(
         plot_2d(img_arr, mask=out_arr_bladder, mask_color="r", mask_threshold=0.5))
@@ -57,9 +59,11 @@ def _log_images(X, Y, Y_hat, i, writer, tag="train"):
     writer.add_image(
         f"{tag}/cervix", Y_hat.exp()[:, 1, :, :, :].squeeze(), i, dataformats="HW")
     writer.add_image(
-        f"{tag}/bladder_gt", Y[:, 0, :, :, :].squeeze(), i, dataformats="HW")
+        f"{tag}/bladder_gt", Y[:, 0, :, :, :].squeeze().float(), i, dataformats="HW")
     writer.add_image(
-        f"{tag}/cervix_gt", Y[:, 1, :, :, :].squeeze(), i, dataformats="HW")
+        f"{tag}/cervix_gt", Y[:, 1, :, :, :].squeeze().float(), i, dataformats="HW")
+    writer.add_image(
+        f"{tag}/other_gt", Y[:, 2, :, :, :].squeeze().float(), i, dataformats="HW")
     writer.add_image(
         f"{tag}/mask_bladder", masked_img_bladder, i, dataformats="HWC")
     writer.add_image(
@@ -111,6 +115,7 @@ def test(args, dl, writer, model, image_shapes):
 
     logger.info("Start Testing...")
     tmp_losses = []
+    metrics = {"bladder": {}, "cervix": {}}
 
     segmentations = {0: [], 1: [], "y_bladder": [], "y_cervix": []}
 
@@ -118,8 +123,8 @@ def test(args, dl, writer, model, image_shapes):
 
     img_i = 0
     temp = image_shapes.pop(0)
-    # img_shape = temp[1][1]
-    img_shape = 256
+    img_shape = temp[1][0]
+    # img_shape = 256
     patient = temp[0].replace("_", "/")
 
     _, metadata = read_image(str(temp[2]))
@@ -148,20 +153,21 @@ def test(args, dl, writer, model, image_shapes):
         loss = criterion(Y_hat, Y.argmax(1))
         tmp_losses.append(loss.detach().cpu().item())
 
-        if len(Y.argmax(1).unique()) > 1:
-            seg_slices += 1
-            logger.debug(f"Add segmentation: {seg_slices}") 
-            segmentations[0].append(
-                Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu() > 0.5)
-            segmentations[1].append(
-                Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu() > 0.5)
-        else:
-            all_zeros += 1
-            logger.debug(f"Add zeros: {all_zeros}")
-            segmentations[0].append(
-                Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu() > 2.0)
-            segmentations[1].append(
-                Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu() > 2.0)
+        # logger.debug(f"{Y.sum()}, {Y.shape}")
+        # if len(Y.argmax(1).unique()) > 1:
+        #     seg_slices += 1
+        #     logger.debug(f"Add segmentation: {seg_slices}") 
+        segmentations[0].append(
+            Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu() > args.threshold)
+        segmentations[1].append(
+            Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu() > args.threshold)
+        # else:
+        #     all_zeros += 1
+        #     logger.debug(f"Add zeros: {all_zeros}")
+        #     segmentations[0].append(
+        #         Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu() > 2.0)
+        #     segmentations[1].append(
+        #         Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu() > 2.0)
 
         img_i += 1
 
@@ -169,17 +175,40 @@ def test(args, dl, writer, model, image_shapes):
             img_i = 0
             logger.info(f"Saving image {patient}")
 
-            y_bladder = torch.stack(segmentations["y_bladder"])
-            y_cervix = torch.stack(segmentations["y_cervix"])
-            seg_bladder = torch.stack(segmentations[0]).int()
-            seg_cervix = torch.stack(segmentations[1]).int()
-            write_image(seg_bladder.transpose(0,1)[56:456,:,56:456], "testing/{}_seg_bladder.nrrd".format(
-                patient.replace("/", "_")), metadata=metadata)
-            write_image(seg_cervix.transpose(0,1)[56:456,:,56:456],
-                        "testing/{}_seg_cervix_uterus.nrrd".format(patient.replace("/", "_")), metadata=metadata)
-            print(type(y_bladder.detach().cpu().numpy()), y_bladder.detach().cpu().shape, y_bladder.detach().cpu().numpy().astype(bool).sum())
-            metrics_bladder = calculate_metrics(y_bladder.transpose(0,1)[56:456,:,56:456].detach().cpu().numpy().astype(bool), seg_bladder.transpose(0,1)[56:456,:,56:456].detach().cpu().numpy().astype(bool), metadata["spacing"], 25.0, [0.5, 1.0, 1.5, 3.0])
-            metrics_cervix = calculate_metrics(y_cervix.transpose(0,1)[56:456,:,56:456].detach().cpu().numpy().astype(bool), seg_cervix.transpose(0,1)[56:456,:,56:456].detach().cpu().numpy().astype(bool), metadata["spacing"], 25.0, [0.5, 1.0, 1.5, 3.0])
+            y_bladder = torch.stack(segmentations["y_bladder"]).detach().cpu().numpy()
+            y_cervix = torch.stack(segmentations["y_cervix"]).detach().cpu().numpy()
+            seg_bladder = torch.stack(segmentations[0]).int().detach().cpu().numpy()
+            seg_cervix = torch.stack(segmentations[1]).int().detach().cpu().numpy()
+
+            if args.post_process:
+                labels_mask = measure.label(seg_bladder)                       
+                regions = measure.regionprops(labels_mask)
+                regions.sort(key=lambda x: x.area, reverse=True)
+                if len(regions) > 1:
+                    for rg in regions[1:]:
+                        labels_mask[rg.coords[:,0], rg.coords[:,1]] = 0
+                labels_mask[labels_mask!=0] = 1
+                seg_bladder = labels_mask
+
+                labels_mask = measure.label(seg_cervix)                       
+                regions = measure.regionprops(labels_mask)
+                regions.sort(key=lambda x: x.area, reverse=True)
+                if len(regions) > 1:
+                    for rg in regions[1:]:
+                        labels_mask[rg.coords[:,0], rg.coords[:,1]] = 0
+                labels_mask[labels_mask!=0] = 1
+                seg_cervix = labels_mask
+            
+            # pickle.dump(seg_bladder, open("{}/{}_seg_cervix_uterus.nrrd".format(args.test_folder, patient.replace("/", "_")), "wb"))
+
+            write_image(seg_bladder.astype(np.uint8), "{}/{}_seg_bladder.nrrd".format(args.test_folder, patient.replace("/", "_")), metadata=metadata)
+            write_image(seg_cervix.astype(np.uint8), "{}/{}_seg_cervix_uterus.nrrd".format(args.test_folder, patient.replace("/", "_")), metadata=metadata)
+
+            metrics_bladder = calculate_metrics(y_bladder.astype(bool), seg_bladder.astype(bool), metadata["spacing"], 25.0, [0.5, 1.0, 1.5, 3.0])
+            metrics_cervix = calculate_metrics(y_cervix.astype(bool), seg_cervix.astype(bool), metadata["spacing"], 25.0, [0.5, 1.0, 1.5, 3.0])
+
+            metrics["bladder"][patient] = metrics_bladder
+            metrics["cervix"][patient] = metrics_cervix
 
             for m, v in metrics_bladder.items():
                 logger.info(f"{m} bladder: {v}")
@@ -189,8 +218,8 @@ def test(args, dl, writer, model, image_shapes):
             segmentations = {0: [], 1: [], "y_bladder": [], "y_cervix": []}
             temp = image_shapes.pop(0)
             if not temp is None:
-                # img_shape = temp[1][1]
-                img_shape = 256
+                img_shape = temp[1][0]
+                # img_shape = 256
                 patient = temp[0].replace("_", "/")
                 CT_path = temp[2]
                 if CT_path.exists():
@@ -205,6 +234,8 @@ def test(args, dl, writer, model, image_shapes):
             logger.info("Iteration: {}/{} Loss: {}".format(i,
                                                            len(dl), sum(tmp_losses)/len(tmp_losses)))
             tmp_losses = []
+    
+    pickle.dump(metrics, open("{}/metrics.p".format(args.test_folder), 'wb'))
 
     writer.flush()
     logger.info("End testing")
@@ -212,11 +243,12 @@ def test(args, dl, writer, model, image_shapes):
 
 def main(args):
     device = "cuda"
-    image_shapes = pickle.load(open("files_CBCT_test.p", 'rb'))
+    image_shapes = pickle.load(open("files_CBCT_CT_test.p", 'rb'))
 
     transform_CBCT= transforms.Compose(
-        [ClipAndNormalize(700, 1600)])#, RandomElastic((21,512,512))])
-    ds = CBCTDataset(image_shapes, transform=transform_CBCT, n_slices=21, clipped=True)
+        [ClipAndNormalize(800, 1250)])#, RandomElastic((21,512,512))])
+    ds = DuoDataset(image_shapes, transform=transform_CBCT, n_slices=21, cbct_only=True)
+    # ds = 
     if args.save_3d:
         dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=12)
         # _, metadata = read_image("/data/cervix/converted/CervixLoP-1/full/CT.nrrd")
@@ -243,18 +275,22 @@ def parse_args():
 
     parser = argparse.ArgumentParser(description='Get data shapes')
 
-    parser.add_argument("-root_dir", help="Dictionary containing the data",
-                        default="/data/cervix", required=False)
     parser.add_argument("-model_file", help="Get the file containing the model weights",
                         default="final_model.pt", required=False)
 
     parser.add_argument("-print_every", help="Print every X iterations",
                         default=10, required=False, type=int)
+    parser.add_argument("-threshold", help="Threshold for the predictions",
+                        default=0.5, required=False, type=float)
     parser.add_argument("-save_3d", help="Save 3D segmentations",
                         default=False, required=False, action="store_true")
+    parser.add_argument("-post_process", help="post process segmentations",
+                        default=False, required=False, action="store_true")
+    parser.add_argument("-test_folder", help="Where to save testing results",
+                        default="testing", required=False)
+    
 
     args = parser.parse_args()
-    args.root_dir = Path(args.root_dir)
     return args
 
 

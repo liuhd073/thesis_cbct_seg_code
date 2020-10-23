@@ -68,15 +68,18 @@ def test():
         open("files_CBCT_CT_train.p", 'rb'))  # training
     files_CBCT_CT_val = pickle.load(
         open("files_CBCT_CT_validation.p", 'rb'))  # validation
+    files_CBCT_CT_test = pickle.load(
+        open("files_CBCT_CT_test.p", 'rb'))  # validation
 
     transform_CT= transforms.Compose(
         [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(800, 1250)])#, RandomElastic((21,512,512))])
-    ds_duo = DuoDataset(files_CBCT_CT_val, transform=transform_CT, return_patient=True)
+    ds_duo = DuoDataset(files_CBCT_CT_test, transform=transform_CT, return_patient=True)
     dl = DataLoader(ds_duo, batch_size=1, shuffle=False, num_workers=10)
 
     seg_slices = 0
     no_seg_slices = 0
 
+    logger.info(f"Number of slices in dataset: {len(ds_duo)}")
     for i, (patient, X_cbct, X_ct, Y_cbct, Y_ct) in enumerate(dl):
         logger.info("{}/{} X: {} Y: {}".format(i, len(ds_duo), X_cbct.shape, Y_cbct.shape))
         if len(Y_cbct.argmax(1).unique()) < 2:
@@ -87,8 +90,7 @@ def test():
         logger.debug(f"Unique: {Y_cbct.argmax(1).unique()} {Y_ct.argmax(1).unique()}")
         logger.debug(f"Min: {X_cbct.min()}, {X_ct.min()}, Max: {X_cbct.max()}, {X_ct.max()}")
 
-        _log_images(X_cbct, X_ct, Y_cbct, Y_ct, i, writer, tag=patient)
-        # _log_images(X_ct, Y_ct, i, writer, tag="Duo CT")
+        # _log_images(X_cbct, X_ct, Y_cbct, Y_ct, i, writer, tag=patient)
 
     print("Seg slices:", seg_slices)
     print("No seg slices:", no_seg_slices)

@@ -23,22 +23,25 @@ logger.addHandler(handler)
 
 
 class DuoDataset(Dataset):
-    def __init__(self, files, n_slices=21, transform=None, cachedir="/cache", return_patient=False):
+    def __init__(self, files, n_slices=21, transform=None, cachedir="/cache", return_patient=False, return_meta=False, cbct_only=False):
         self.n_slices = n_slices
+        self.return_meta = return_meta
         self.return_patient = return_patient
+        self.cbct_only = cbct_only
         self.image_shapes = {tup[0]: (tup[1][1], tup[1][0], tup[1][2]) for tup in files}
         self.data_cbct = {tup[0]: (tup[2], tup[3], tup[5]) for tup in files}
         self.data_ct = {tup[0]: (tup[4], tup[6]) for tup in files}
         self.patients = list(self.image_shapes.keys())
         self.transform = transform
         self.cumulative_imshapes = [0] + list(
-            np.cumsum([self.image_shapes[patient][-3] for patient in self.patients])
+            np.cumsum([self.image_shapes[patient][-2] for patient in self.patients])
         )
         self.cachedir = Path(cachedir)
         self.current_patient = None
+        self.meta = None
 
     def __len__(self):
-        return sum([self.image_shapes[patient][-3] for patient in self.patients])
+        return sum([self.image_shapes[patient][-2] for patient in self.patients])
 
     def _get_segmentation_ct(self, segmentations):
         if len(segmentations) == 2:
@@ -55,10 +58,8 @@ class DuoDataset(Dataset):
 
     def _get_segmentation_cbct(self, segmentations, ct_seg_fn):
         if len(segmentations) == 4:
-            bladder_affine = np.loadtxt(str(segmentations[1]))
-            cervix_affine = np.loadtxt(str(segmentations[3]))
-            seg_bladder = read_image(segmentations[0], no_meta=True, affine_matrix=bladder_affine, ref_fn=ct_seg_fn[0])
-            seg_cervix_uterus = read_image(segmentations[2], no_meta=True, affine_matrix=cervix_affine, ref_fn=ct_seg_fn[1]) 
+            seg_bladder = read_image(segmentations[0], no_meta=True, affine_matrix=True, ref_fn=ct_seg_fn[0])
+            seg_cervix_uterus = read_image(segmentations[2], no_meta=True, affine_matrix=True, ref_fn=ct_seg_fn[1]) 
         
         start = int((seg_bladder.shape[2] - 512) / 2)
         seg_bladder = crop_to_bbox(seg_bladder, (0, start, start, seg_bladder.shape[0], 512, 512))
@@ -77,8 +78,8 @@ class DuoDataset(Dataset):
 
         image_path, affine_fn, segmentation_paths = self.data_cbct[patient]
         ct_fn, ct_seg_fn = self.data_ct[patient]
-        affine = np.loadtxt(str(affine_fn))
-        cbct = read_image(image_path, no_meta=True, affine_matrix=affine, ref_fn=ct_fn)
+        cbct, meta = read_image(image_path, affine_matrix=True, ref_fn=ct_fn, interpolator="linear") # no_meta=True, 
+        self.meta = meta
         segmentation_cbct = self._get_segmentation_cbct(segmentation_paths, ct_seg_fn)
         logger.debug(f"CBCT Shape: {cbct.shape}")
         logger.debug(f"Image and segmentation shapes:\nCBCT: {cbct.shape}\nCBCT seg: {segmentation_cbct.shape}")
@@ -133,6 +134,10 @@ class DuoDataset(Dataset):
             0 not in ct_seg_slice.shape and 0 not in cbct_seg_slice.shape
         ), f"Segmentation slice has dimension of size 0: {ct_seg_slice.shape}"
 
+        if self.cbct_only:
+            return cbct_slice, cbct_seg_slice
+        if self.return_meta:
+            return self.meta, patient, cbct_slice, ct_slice, cbct_seg_slice, ct_seg_slice
         if self.return_patient:
             return patient, cbct_slice, ct_slice, cbct_seg_slice, ct_seg_slice
         return cbct_slice, ct_slice, cbct_seg_slice, ct_seg_slice

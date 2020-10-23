@@ -81,20 +81,20 @@ def test(args):
         [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(800, 1250)])#, RandomElastic((21,512,512))])
     transform_CT= transforms.Compose(
         [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(800, 1250)])#, RandomElastic((21,512,512))])
-    ds_CT = CTDataset(files_CT_train, transform=transform_CT)
-    ds_CBCT = CBCTDataset(files_CBCT_val, transform=transform_CBCT, clipped=False)
+    ds_CT = CTDataset(files_CT_val, transform=transform_CT)
+    ds_CBCT = CBCTDataset(files_CBCT_val, transform=transform_CBCT)
     ds_combined = CombinedDataset(ds_CT, ds_CBCT)
-    dl = DataLoader(ds_CT, batch_size=1, shuffle=False, num_workers=12)
+    dl = DataLoader(ds_CBCT, batch_size=1, shuffle=False, num_workers=12)
 
     seg_slices = 0
     no_seg_slices = 0
     j=0
     n = 0
-    patient = files_CT_train[n][0]
-    shape = files_CT_train[n][1][0]
+    patient = files_CBCT_val[n][0]
+    shape = files_CBCT_val[n][1][0]
 
     for i, (X, Y) in enumerate(dl):
-        logger.info("{}/{} X: {} Y: {}".format(i, len(ds_CT), X.shape, Y.shape))
+        logger.info("{}/{} X: {} Y: {}".format(i, len(ds_CBCT), X.shape, Y.shape))
         if len(Y.argmax(1).unique()) < 2:
             no_seg_slices += 1
         else:
@@ -105,14 +105,13 @@ def test(args):
 
         _log_images(X.numpy(), Y.numpy(), i, writer, tag=patient)
         j+=1
-        if (j) >= shape:
+        if j >= shape:
             n += 1
-            patient = files_CT_train[n][0]
+            patient = files_CBCT_val[n][0]
             if patient == "CT":
-                patient = files_CT_train[n][2].parent.stem
-            shape = files_CT_train[n][1][0]
+                patient = files_CBCT_val[n][2].parent.stem
+            shape = files_CBCT_val[n][1][0]
             j=0
-            # shape += files_CBCT_train[n][1][1]
     print("Seg slices:", seg_slices)
     print("No seg slices:", no_seg_slices)
 

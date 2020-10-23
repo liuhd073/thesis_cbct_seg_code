@@ -8,17 +8,27 @@ import torchvision.transforms as transforms
 from torch.utils.tensorboard import SummaryWriter
 import torch.nn as nn
 from torch.optim import Adam
+from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
 from pathlib import Path
-from resblockunet import ResBlockUnet
+from models.resblockunet import ResBlockUnet
 from torch.utils.data import DataLoader
 
 from dataset import CTDataset
 from dataset_CBCT import CBCTDataset
 from dataset_combined import CombinedDataset
+from dataset_duo import DuoDataset
 from preprocess import ClipAndNormalize, GaussianAdditiveNoise, RandomElastic
 from utils.plotting import plot_2d
 from mini_model import UNetResBlocks 
+
+import time
+
+try:
+    from apex import amp
+    APEX_AVAILABLE = True
+except ModuleNotFoundError:
+    APEX_AVAILABLE = False
 
 import sys
 import logging
@@ -42,7 +52,7 @@ def get_loss_func(loss_func="BCE"):
     if loss_func == "NLL":
         # Classes: bladder, cervix, other
         # Check class weights
-        weights = torch.Tensor([2, 4, 1]).to("cuda")
+        weights = torch.Tensor([15, 20, 1]).to("cuda")
         if args.topk < 1.0:
             return nn.NLLLoss(weight=weights, reduction="none")
         else:
@@ -69,7 +79,7 @@ class SplitLoss(object):
 
 def get_model(args, device):
     logger.info("Loading Model...")
-    model = ResBlockUnet(1, 3, (1, 512, 512), use_group_norm=args.use_group_norm)
+    model = ResBlockUnet(1, 3, (1, 512, 512), dropout_prob=args.dropout, use_group_norm=args.use_group_norm)
     if args.load_model:
         model.load_state_dict(torch.load(open(args.model_file, 'rb')))
         logger.info("Model loaded!")
@@ -97,12 +107,12 @@ def check_results_folder(args):
 
 def _log_images(X, Y, Y_hat, i, writer, tag="train"):
     middle_slice = X.shape[2] // 2
-    img_arr = X[0, 0, middle_slice, :, :].detach().cpu()
-    seg_arr_bladder = Y[:, BLADDER, :, :, :].squeeze().detach().cpu()
-    seg_arr_cervix = Y[:, CERVIX, :, :, :].squeeze().detach().cpu()
+    img_arr = X[0, 0, middle_slice, :, :].detach().cpu().numpy()
+    seg_arr_bladder = Y[0, BLADDER, :, :, :].squeeze().detach().cpu().numpy()
+    seg_arr_cervix = Y[0, CERVIX, :, :, :].squeeze().detach().cpu().numpy()
 
-    out_arr_bladder = Y_hat.exp()[:, BLADDER, :, :, :].squeeze().detach().cpu()
-    out_arr_cervix = Y_hat.exp()[:, CERVIX, :, :, :].squeeze().detach().cpu()
+    out_arr_bladder = Y_hat.exp()[0, BLADDER, :, :, :].squeeze().detach().cpu().numpy()
+    out_arr_cervix = Y_hat.exp()[0, CERVIX, :, :, :].squeeze().detach().cpu().numpy()
 
     masked_img_bladder = np.array(
         plot_2d(img_arr, mask=out_arr_bladder, mask_color="r", mask_threshold=0.5))
@@ -115,13 +125,13 @@ def _log_images(X, Y, Y_hat, i, writer, tag="train"):
         np.array(plot_2d(masked_img_cervix, mask=seg_arr_cervix, mask_color="g")))
 
     writer.add_image(
-        f"{tag}/bladder", Y_hat.exp()[:, BLADDER, :, :, :].squeeze(), i, dataformats="HW")
+        f"{tag}/bladder", Y_hat.exp()[0, BLADDER, :, :, :].squeeze(), i, dataformats="HW")
     writer.add_image(
-        f"{tag}/cervix", Y_hat.exp()[:, CERVIX, :, :, :].squeeze(), i, dataformats="HW")
+        f"{tag}/cervix", Y_hat.exp()[0, CERVIX, :, :, :].squeeze(), i, dataformats="HW")
     writer.add_image(
-        f"{tag}/bladder_gt", Y[:, BLADDER, :, :, :].squeeze(), i, dataformats="HW")
+        f"{tag}/bladder_gt", Y[0, BLADDER, :, :, :].squeeze(), i, dataformats="HW")
     writer.add_image(
-        f"{tag}/cervix_gt", Y[:, CERVIX, :, :, :].squeeze(), i, dataformats="HW")
+        f"{tag}/cervix_gt", Y[0, CERVIX, :, :, :].squeeze(), i, dataformats="HW")
     writer.add_image(
         f"{tag}/mask_bladder", masked_img_bladder, i, dataformats="HWC")
     writer.add_image(
@@ -139,15 +149,19 @@ def evaluate(dl_val, writer, model, device, criterion, j, max_iters=None):
     for X, Y in tqdm(dl_val):
         X, Y = X.to(device).float(), Y.to(device).float()
 
+        if args.mc_train:
+            if len(Y.argmax(1).unique()) < 2:
+                continue
         if args.equal_train:
             if len(Y.argmax(1).unique()) < 2:
                 continue
-        torch.cuda.empty_cache()
-        Y_hat = model(X)
-        if args.loss_func == "NLL":
-            Y_hat = softmax(Y_hat)
-        loss = criterion(Y_hat, Y.argmax(1)).mean()
-        split_losses = split_loss(Y, Y_hat)
+        if args.apex:
+            with autocast():
+                Y_hat = model(X)
+                if args.loss_func == "NLL":
+                    Y_hat = softmax(Y_hat)
+                loss = criterion(Y_hat, Y.argmax(1)).mean()
+                split_losses = split_loss(Y, Y_hat)
         
         if args.save_imgs and i % 10 == 0:
             _log_images(X.detach().cpu(), Y.detach().cpu(), Y_hat.detach().cpu(), i, writer, "validation")
@@ -172,33 +186,50 @@ def evaluate(dl_val, writer, model, device, criterion, j, max_iters=None):
 def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true_i, losses):
     softmax = nn.LogSoftmax(1)
     tmp_losses = []
+    scaler = GradScaler()
     
     model.train()
     for i, (X, Y) in enumerate(dl):
-        X, Y = X.to(device).float(), Y.to(device).float()
-
         if args.mc_train:
             if len(Y.argmax(1).unique()) < 2:
                 continue
-        if args.equal_train:
-            if len(Y.argmax(1).unique()) < 2 and np.random.rand(1) > 0.25:
-                continue
 
-        Y_hat = model(X)
-        assert Y_hat.shape == Y.shape, "output and classification must be same shape {} {}".format(
-            Y.shape, Y_hat.shape)
+        X, Y = X.to(device).float(), Y.to(device).float()
 
-        if args.loss_func == "NLL":
-            Y_hat = softmax(Y_hat)
-        loss = criterion(Y_hat, Y.argmax(1))
-        topkloss, _ = torch.topk(loss.flatten(), int(args.topk*loss.numel()))
-        loss = topkloss.mean()
+        if args.apex:
+            with autocast():
+                Y_hat = model(X)
+                assert Y_hat.shape == Y.shape, "output and classification must be same shape {} {}".format(
+                    Y.shape, Y_hat.shape)
+
+                if args.loss_func == "NLL":
+                    Y_hat = softmax(Y_hat)
+                loss = criterion(Y_hat, Y.argmax(1))
+                topkloss, _ = torch.topk(loss.flatten(), int(args.topk*loss.numel()))
+                loss = topkloss.mean()
+                loss = loss / args.iters_to_accumulate
+        else:
+            Y_hat = model(X)
+            assert Y_hat.shape == Y.shape, "output and classification must be same shape {} {}".format(
+                Y.shape, Y_hat.shape)
+
+            if args.loss_func == "NLL":
+                Y_hat = softmax(Y_hat)
+            loss = criterion(Y_hat, Y.argmax(1))
+            topkloss, _ = torch.topk(loss.flatten(), int(args.topk*loss.numel()))
+            loss = topkloss.mean()
         
         # Train model
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        torch.cuda.empty_cache()
+        if args.apex:
+            scaler.scale(loss).backward()
+            if (i + 1) % args.iters_to_accumulate == 0:
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+        else:
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
 
         losses["train"].append(loss.detach().cpu().item())
         tmp_losses.append(losses["train"][-1])
@@ -206,7 +237,7 @@ def train(model, dl, dl_val, optimizer, criterion, args, writer, device, j, true
         neptune.send_metric("loss/train", true_i, losses["train"][-1])
 
         if true_i % args.eval_every == 0:
-            eval_loss = evaluate(dl_val, writer, model, device, criterion, j, max_iters=500)
+            eval_loss = evaluate(dl_val, writer, model, device, criterion, j, max_iters=1000)
             writer.add_scalar("loss/validation", eval_loss[1], true_i)
             writer.add_scalar("loss/validation/bladder", eval_loss[2][0], true_i)
             writer.add_scalar("loss/validation/cervix", eval_loss[2][1], true_i)
@@ -254,6 +285,16 @@ def main(args):
     files_CBCT_val = pickle.load(
         open("files_CBCT_validation.p", 'rb'))  # validation
 
+    files_CBCT_CT_train = pickle.load(
+        open("files_CBCT_CT_train.p", 'rb'))  # training
+    files_CBCT_CT_val = pickle.load(
+        open("files_CBCT_CT_validation.p", 'rb'))  # validation
+
+    files_sCT_train = pickle.load(
+        open("files_sCT_pCT_train.p", 'rb'))  # training
+    files_sCT_val = pickle.load(
+        open("files_sCT_pCT_validation.p", 'rb'))  # validation
+
     # Load datasets
     files_CT_train = pickle.load(
         open("files_CT_train.p", 'rb'))  # training
@@ -262,25 +303,27 @@ def main(args):
     print(f"file lengths: {len(files_CBCT_train)}, {len(files_CT_train)}")
 
     transform_CBCT= transforms.Compose(
-        [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(750, 1250)])#, RandomElastic((21,512,512))])
+        [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(800, 1250)])#, RandomElastic((21,512,512))])
     transform_CT= transforms.Compose(
-        [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(-100, 300)])#, RandomElastic((21,512,512))])
+        [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(800, 1250)])#, RandomElastic((21,512,512))])
     ds_CT = CTDataset(files_CT_train, transform=transform_CT)
-    ds_CBCT = CBCTDataset(files_CBCT_train, transform=transform_CBCT, clipped=False)
-    ds_combined = CombinedDataset(ds_CT, ds_CBCT)
-    dl = DataLoader(ds_combined, batch_size=1, shuffle=args.shuffle, num_workers=6)
+    ds_CBCT = CBCTDataset(files_CBCT_train, transform=transform_CBCT)
+    ds_duo = DuoDataset(files_sCT_train, transform=transform_CBCT, n_slices=21, cbct_only=True)
+    ds_combined = CombinedDataset(ds_CT, ds_duo)
+    dl = DataLoader(ds_duo, batch_size=args.batch_size, shuffle=args.shuffle, num_workers=6)
 
-    # ds_CT = CTDataset(files_CT_val, transform=transform_CT)
-    ds_CBCT = CBCTDataset(files_CBCT_val, transform=transform_CBCT, clipped=False)
-    # ds_combined = CombinedDataset(ds_CT, ds_CBCT)
-    dl_val = DataLoader(ds_CBCT, batch_size=1, shuffle=args.shuffle, num_workers=6)
+    ds_CT = CTDataset(files_CT_val, transform=transform_CT)
+    ds_CBCT = CBCTDataset(files_CBCT_val, transform=transform_CBCT)
+    ds_combined = CombinedDataset(ds_CT, ds_CBCT)
+    ds_duo = DuoDataset(files_sCT_val, transform=transform_CBCT, n_slices=21, cbct_only=True)
+    dl_val = DataLoader(ds_duo, batch_size=args.batch_size, shuffle=args.shuffle, num_workers=6)
 
     writer = SummaryWriter()
 
     model = get_model(args, device)
     logger.info("Model Loaded")
     optimizer = Adam(model.parameters(), lr=args.lr)
-    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.1)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.1)
 
     criterion = get_loss_func(args.loss_func)
 
@@ -301,17 +344,17 @@ def main(args):
         f.write(str(args))
 
     logger.info("Start Training...")
-    true_i = 0
-    for j in range(args.max_epochs):
+    true_i = 1
+    for j in range(1, args.max_epochs + 1):
         losses, true_i = train(model, dl, dl_val, optimizer,
                                criterion, args, writer, device, j, true_i, losses)
 
         if true_i > args.max_iters:
             break
 
-        if j > 14:
+        if j >= 10:
             args.mc_train = False
-        # scheduler.step()
+        scheduler.step()
         loss_fn = args.loss_dir / "losses.p"
         pickle.dump(losses["train"], open(loss_fn, 'wb'))
         loss_fn = args.loss_dir / "losses_val.p"
@@ -319,11 +362,11 @@ def main(args):
 
     logger.info("End training, save final model...")
     writer.flush()
-    torch.save(model.state_dict(), "final_model.pt")
+    torch.save(model.state_dict(), str(args.model_dir / "final_model.pt"))
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Get data shapes')
+    parser = argparse.ArgumentParser(description='Train segmentation model')
 
     parser.add_argument("-experiment_name", help="Set name of the experiment in Neptune",
                         default="Experiment", required=False)
@@ -339,9 +382,11 @@ def parse_args():
                         default="/app/results", required=False)
 
     parser.add_argument("-lr", help="Learning Rate",
-                        default=0.0001, required=False, type=float)
+                        default=0.0002, required=False, type=float)
     parser.add_argument("-topk", help="Top K Loss",
                         default=1.0, required=False, type=float)
+    parser.add_argument("-dropout", help="Dropout probability",
+                        default=0.0, required=False, type=float)
     parser.add_argument("-loss_func", help="Loss Function: BCE/NLL",
                         default="NLL", required=False, type=str)
     parser.add_argument("-mc_train", help="Only train using images with at least 2 classes",
@@ -350,8 +395,14 @@ def parse_args():
                         default=False, required=False, action="store_true")
     parser.add_argument("-use_group_norm", help="Implement group norm in model",
                         default=False, required=False, action="store_true")
-    parser.add_argument("-no_shuffle", dest="shuffle", help="Shuffle dataset",
+    parser.add_argument("-no_shuffle", dest="shuffle", help="Don't shuffle dataset",
                         default=True, required=False, action="store_false")
+    parser.add_argument("-no_apex", dest="apex", help="Turn off apex",
+                        default=True, required=False, action="store_false")
+    parser.add_argument("-batch_size", help="Batch Size",
+                        default=1, required=False, type=int)
+    parser.add_argument("-iters_to_accumulate", help="Accumulate gradients for N iterations",
+                        default=1, required=False, type=int)    
 
     parser.add_argument("-max_epochs", help="Maximum number of iterations",
                         default=100, required=False, type=int)
@@ -359,9 +410,9 @@ def parse_args():
                         default=150000, required=False, type=int)
     parser.add_argument("-print_every", help="Print every X iterations",
                         default=10, required=False, type=int)
-    parser.add_argument("-save_every", help="Save model every X epochs",
+    parser.add_argument("-save_every", help="Save model every X iterations",
                         default=1, required=False, type=int)
-    parser.add_argument("-eval_every", help="Evaluate model every X epochs using validation set",
+    parser.add_argument("-eval_every", help="Evaluate model every X iterations using validation set",
                         default=1, required=False, type=int)
 
     args = parser.parse_args()
@@ -376,11 +427,13 @@ def get_params(args):
     PARAMS["Model"] = "3D U-Net + ResNet"
     PARAMS["shuffle"] = args.shuffle
     PARAMS["Equal_train"] = args.equal_train
+    PARAMS["mc_train"] = args.mc_train
     PARAMS["Top_k"] = args.topk
     PARAMS["Save_every"] = args.save_every
     PARAMS["Eval_every"] = args.eval_every
     PARAMS["Learning_Rate"] = args.lr
     PARAMS["Pooling"] = "avg"
+    PARAMS["results_folder"] = args.results_folder
     return PARAMS
 
 
@@ -390,7 +443,7 @@ if __name__ == "__main__":
     PARAMS = get_params(args)
     neptune.init('twagenaar/Thesis-CT-seg')
     neptune.create_experiment(name=args.experiment_name, params=PARAMS)
+    
     main(args)
 
-    neptune.append_tag("finished")
     neptune.stop()
