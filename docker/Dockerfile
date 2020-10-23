@@ -1,4 +1,4 @@
-FROM nvidia/cuda:10.1-base-ubuntu18.04
+FROM nvidia/cuda:10.1-devel-ubuntu18.04
 
 # Install some basic utilities
 RUN apt-get update && apt-get install -y \
@@ -37,13 +37,24 @@ RUN curl -sLo ~/miniconda.sh https://repo.continuum.io/miniconda/Miniconda3-py38
 # CUDA 10.2-specific steps
 RUN conda install -y -c pytorch \
     cudatoolkit=10.1 \
-    "pytorch=1.5.1=py3.8_cuda10.1.243_cudnn7.6.3_0" \
-    "torchvision=0.6.1=py38_cu101" \
+    "pytorch=1.6.0=py3.8_cuda10.1.243_cudnn7.6.3_0" \
+    "torchvision=0.7.0=py38_cu101" \
  && conda clean -ya
 
-# RUN sudo apt-get install libglib2.0-0 libsm6 libxext6 libxrender1
+# RUN sudo apt-get install libglib2.0-0 libsm6 libxext6 libxrender1 libgl1-mesa-glx
+
 RUN pip install tensorboard
 RUN pip install simpleitk neptune-client pillow==6.2.1 scikit-image scipy opencv-python
+
+# Set up Nvidia Apex
+WORKDIR /home/user
+# uninstall Apex if present, twice to make absolutely sure :)
+RUN pip uninstall -y apex || :
+RUN pip uninstall -y apex || :
+RUN git clone https://github.com/NVIDIA/apex.git
+WORKDIR /home/user/apex
+RUN pip install -v --no-cache-dir --global-option="--cuda_ext" .
+WORKDIR /app
 
 # Set the default command to python3
 CMD ["/bin/bash"]

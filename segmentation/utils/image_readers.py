@@ -49,6 +49,7 @@ def resample_sitk_image(sitk_image, spacing=None, interpolator=None,
     """
     if isinstance(sitk_image, str):
         sitk_image = sitk.ReadImage(sitk_image)
+        print("SITK reference image found")
     num_dim = sitk_image.GetDimension()
     if not interpolator:
         interpolator = 'linear'
@@ -163,7 +164,7 @@ def read_image(filename, force_2d=False, dtype=None, no_meta=False, affine_matri
             sitk_ref_image = None
         sitk_image = sitk.ReadImage(str(filename))
         orig_shape = sitk.GetArrayFromImage(sitk_image).shape
-        if new_spacing or not (affine_matrix is None):
+        if new_spacing or not (sitk_ref_image is None):
             sitk_image, meta_data = resample_sitk_image(
                 sitk_image,
                 spacing=new_spacing,

@@ -87,9 +87,6 @@ class CBCTDataset(Dataset):
         im_slice = np.expand_dims(sample["image"],0)
         seg_slice = np.expand_dims(sample["target"],1)
         
-        # assert (
-        #     image.shape == segmentation.shape[1:]
-        # ), "image and segmentation should be of same shape in dataset!"
         assert (
             0 not in seg_slice.shape
         ), f"Segmentation slice has dimension of size 0: {seg_slice.shape}"
