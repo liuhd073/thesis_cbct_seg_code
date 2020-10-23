@@ -33,7 +33,7 @@ def get_activation(activation_name, **kwargs):
 
 class Ynetwork(nn.Module):
     def __init__(self, num_channels, num_classes, output_shape, 
-                 down_blocks=((2, 0, 32), (2, 0, 32), (1, 0, 64), (1, 1, 64), (1, 1, 128), (1, 2, 128), (0, 4, 256, False)),
+                 down_blocks=((2, 0, 32), (2, 0, 32), (2, 0, 64), (1, 2, 64), (1, 2, 128), (1, 2, 128), (0, 4, 256, False)),
                  up_blocks=((4, 256, False), (3, 128), (3, 128), (3, 64), (3, 64), (3, 64), (3, 64)),
                  bottleneck_channels=1024, mode='bilinear', dim=3, compress_dim=0, dropout_prob=0.0,
                  use_group_norm=False, num_groups=4, activation='relu'):
@@ -109,6 +109,7 @@ class Ynetwork(nn.Module):
         x = self.bottleneck(xs1[-1], xs2[-1])
         if self.dim_up < self.dim:
             x = torch.squeeze(x, dim=(2 + self.compress_dim))
+
         for idx in range(self.depth):
             x = self.ups[idx](x, xs1[self.depth - idx - 1])
 
@@ -186,7 +187,335 @@ class Ynetwork(nn.Module):
                     tshape[dim] = tshape[dim] * 2
         return tshape
 
+
+class YnetworkSeg(nn.Module):
+    def __init__(self, num_channels, num_classes, output_shape, 
+                 down_blocks=((2, 0, 32), (2, 0, 32), (2, 0, 64), (1, 2, 64), (1, 2, 128), (1, 2, 128), (0, 4, 256, False)),
+                 up_blocks=((4, 256, False), (3, 128), (3, 128), (3, 64), (3, 64), (3, 64), (3, 64)),
+                 bottleneck_channels=1024, mode='bilinear', dim=3, compress_dim=0, dropout_prob=0.0,
+                 use_group_norm=False, num_groups=4, activation='relu'):
+        super().__init__()
+        self.logger = logging.getLogger(type(self).__name__)
+        assert len(down_blocks) == len(up_blocks), 'Upsampling path should have the same length as downsampling.'
+        assert len(output_shape) == dim, f'Output shape should have {dim} dimensions.'
+        self.depth = len(down_blocks)
+        self.down_blocks = down_blocks
+        self.up_blocks = up_blocks
+
+        self.num_channels = num_channels
+        self.num_classes = num_classes
+        self.shape_out = output_shape
+        self.shape_in = self.compute_shape_in(output_shape, compress_dim=compress_dim)
+        self.dim = dim
+        self.compress_dim = compress_dim
+        # If our model output has only one slice in compressed dim, we use 2D convolutions in in the upsampling path
+        if dim == 3 and output_shape[compress_dim] == 1:
+            self.dim_up = 2
+        else:
+            self.dim_up = self.dim
+        self.shape_bottleneck = self.compute_shape_bottleneck_from_output(output_shape, compress_dim=compress_dim)
+        self.logger.info(f'Input shape {self.shape_in}, output shape {self.shape_out}, bottleneck shape {self.shape_bottleneck}')
+        self.downs1 = nn.ModuleList()
+        self.downs2 = nn.ModuleList()
+        self.ups = nn.ModuleList()
+        curr_channels = num_channels
+        for desc_down in down_blocks:
+            if len(desc_down) == 3:
+                downsample = True
+            else:
+                downsample = desc_down[3]
+            down_block = ResBlock(curr_channels, desc_down[2], n_conv_a=desc_down[0], n_conv_b=desc_down[1], dim=dim,
+                              compress_dim=compress_dim, dropout_prob=dropout_prob, use_group_norm=use_group_norm,
+                              num_groups=num_groups, activation=activation, downsample=downsample)
+            self.downs1.append(down_block)
+            self.downs2.append(down_block)
+            curr_channels = desc_down[2]
+
+        self.preprocess = ResBlock(num_channels, num_channels, n_conv_a=2, n_conv_b=1, dim=dim,
+                            compress_dim=compress_dim, dropout_prob=dropout_prob, use_group_norm=use_group_norm,
+                            num_groups=num_groups, activation=activation, downsample=downsample)
+        self.bottleneck = BottleneckBlock(self.shape_bottleneck, curr_channels, int_ch=bottleneck_channels)
+
+        for idx, desc_up in enumerate(up_blocks):
+            if len(desc_up) == 2:
+                upsample = True
+            else:
+                upsample = desc_up[2]
+            up_block = UpsampleBlock(curr_channels + down_blocks[self.depth - idx - 1][2], desc_up[1], desc_up[0], dim=dim,
+                                     conv_dim=self.dim_up, compress_dim=compress_dim, dropout_prob=dropout_prob,
+                                     use_group_norm=use_group_norm, num_groups=num_groups, upscale=upsample, mode=mode,
+                                     activation=activation)
+            curr_channels = desc_up[1]
+            self.ups.append(up_block)
+
+        if self.dim_up == 2:
+            self.outc = nn.Conv2d(curr_channels, num_classes, 1, padding=0)
+        else:
+            self.outc = nn.Conv3d(curr_channels, num_classes, 1, padding=0)
+
+        #self.init_weights()
+
+    def forward(self, x1, x2, y):
+        _, y_max = y.max(dim=1, keepdim=True)
+        x = torch.cat((y_max, x2, y_max), dim=2)
+        _, x2 = self.preprocess(x)
+
+        xs1 = []
+        for idx in range(self.depth):
+            y1, x1 = self.downs1[idx](x1)
+            xs1.append(y1)
         
+        xs2 = []
+        for idx in range(self.depth):
+            y2, x2 = self.downs2[idx](x2)
+            xs2.append(y2)
+
+        x = self.bottleneck(xs1[-1], xs2[-1])
+        if self.dim_up < self.dim:
+            x = torch.squeeze(x, dim=(2 + self.compress_dim))
+
+        for idx in range(self.depth):
+            x = self.ups[idx](x, xs1[self.depth - idx - 1])
+
+        x = self.outc(x)
+        if self.dim_up < self.dim:
+            # Input has a compressed dimension which we restore to have a correct output shape
+            x = torch.unsqueeze(x, 2 + self.compress_dim)
+
+        return x
+
+    def compute_shape_bottleneck_from_output(self, shape_out, compress_dim=1):
+        tshape = list(shape_out)
+        dims = [val for val in range(len(shape_out)) if val != compress_dim]
+        for block in self.up_blocks:
+            if len(block) == 2:
+                upsample = True
+            else:
+                upsample = block[2]
+            if upsample:
+                for dim in dims:
+                    tshape[dim] = tshape[dim] // 2
+
+        return tshape
+
+    def compute_shape_in(self, shape_out, compress_dim=1):
+        tshape = list(shape_out)
+        dims = [val for val in range(len(shape_out)) if val != compress_dim]
+
+        assert np.all([is_power2(tshape[dim]) for dim in dims]),\
+            'Output dimensions in the non-compressed dimension should be powers of two'
+
+        for block in self.up_blocks:
+            if len(block) == 2:
+                upsample = True
+            else:
+                upsample = block[2]
+            if upsample:
+                for dim in dims:
+                    tshape[dim] = tshape[dim] // 2
+        for block in self.down_blocks:
+            if len(block) == 3:
+                downsample = True
+            else:
+                downsample = block[3]
+            if downsample:
+                for dim in dims:
+                    tshape[dim] = tshape[dim] * 2
+            tshape[compress_dim] = tshape[compress_dim] + 2*block[1]
+        return tshape
+
+    def compute_shape_out(self, shape_in, compress_dim=1):
+        tshape = list(shape_in)
+        dims = [val for val in range(len(shape_in)) if val != compress_dim]
+
+        assert np.all([is_power2(tshape[dim]) for dim in dims]), \
+            'Output dimensions in the non-compressed dimension should be powers of two'
+
+        for block in self.down_blocks:
+            if len(block) == 3:
+                downsample = True
+            else:
+                downsample = block[3]
+            if downsample:
+                for dim in dims:
+                    tshape[dim] = tshape[dim] // 2
+            tshape[compress_dim] = tshape[compress_dim] - 2 * block[1]
+        for block in self.up_blocks:
+            if len(block) == 2:
+
+                upsample = True
+            else:
+                upsample = block[2]
+            if upsample:
+                for dim in dims:
+                    tshape[dim] = tshape[dim] * 2
+        return tshape
+
+
+class YnetworkSkip(nn.Module):
+    def __init__(self, num_channels, num_classes, output_shape, 
+                 down_blocks=((2, 0, 32), (2, 0, 32), (2, 0, 64), (1, 2, 64), (1, 2, 128), (1, 2, 128), (0, 4, 256, False)),
+                 up_blocks=((4, 256, False), (3, 128), (3, 128), (3, 64), (3, 64), (3, 64), (3, 64)),
+                 bottleneck_channels=1024, mode='bilinear', dim=3, compress_dim=0, dropout_prob=0.0,
+                 use_group_norm=False, num_groups=4, activation='relu'):
+        super().__init__()
+        self.logger = logging.getLogger(type(self).__name__)
+        assert len(down_blocks) == len(up_blocks), 'Upsampling path should have the same length as downsampling.'
+        assert len(output_shape) == dim, f'Output shape should have {dim} dimensions.'
+        self.depth = len(down_blocks)
+        self.down_blocks = down_blocks
+        self.up_blocks = up_blocks
+
+        self.num_channels = num_channels
+        self.num_classes = num_classes
+        self.shape_out = output_shape
+        self.shape_in = self.compute_shape_in(output_shape, compress_dim=compress_dim)
+        self.dim = dim
+        self.compress_dim = compress_dim
+        # If our model output has only one slice in compressed dim, we use 2D convolutions in in the upsampling path
+        if dim == 3 and output_shape[compress_dim] == 1:
+            self.dim_up = 2
+        else:
+            self.dim_up = self.dim
+        self.shape_bottleneck = self.compute_shape_bottleneck_from_output(output_shape, compress_dim=compress_dim)
+        self.logger.info(f'Input shape {self.shape_in}, output shape {self.shape_out}, bottleneck shape {self.shape_bottleneck}')
+        self.downs1 = nn.ModuleList()
+        self.downs2 = nn.ModuleList()
+        self.ups = nn.ModuleList()
+        curr_channels = num_channels
+        for desc_down in down_blocks:
+            if len(desc_down) == 3:
+                downsample = True
+            else:
+                downsample = desc_down[3]
+            down_block = ResBlock(curr_channels, desc_down[2], n_conv_a=desc_down[0], n_conv_b=desc_down[1], dim=dim,
+                              compress_dim=compress_dim, dropout_prob=dropout_prob, use_group_norm=use_group_norm,
+                              num_groups=num_groups, activation=activation, downsample=downsample)
+            self.downs1.append(down_block)
+            self.downs2.append(down_block)
+            curr_channels = desc_down[2]
+
+        self.preprocess = ResBlock(num_channels, num_channels, n_conv_a=2, n_conv_b=1, dim=dim,
+                            compress_dim=compress_dim, dropout_prob=dropout_prob, use_group_norm=use_group_norm,
+                            num_groups=num_groups, activation=activation, downsample=downsample)
+        self.bottleneck = BottleneckBlock(self.shape_bottleneck, curr_channels, int_ch=bottleneck_channels)
+
+        for idx, desc_up in enumerate(up_blocks):
+            if len(desc_up) == 2:
+                upsample = True
+            else:
+                upsample = desc_up[2]
+            up_block = UpsampleBlock2(curr_channels + 2*down_blocks[self.depth - idx - 1][2], desc_up[1], desc_up[0], dim=dim,
+                                     conv_dim=self.dim_up, compress_dim=compress_dim, dropout_prob=dropout_prob,
+                                     use_group_norm=use_group_norm, num_groups=num_groups, upscale=upsample, mode=mode,
+                                     activation=activation)
+            curr_channels = desc_up[1]
+            self.ups.append(up_block)
+
+        if self.dim_up == 2:
+            self.outc = nn.Conv2d(curr_channels, num_classes, 1, padding=0)
+        else:
+            self.outc = nn.Conv3d(curr_channels, num_classes, 1, padding=0)
+
+        #self.init_weights()
+
+    def forward(self, x1, x2):
+        _, y_max = y.max(dim=1, keepdim=True)
+        x = torch.cat((y_max, x2, y_max), dim=2)
+        _, x2 = self.preprocess(x)
+
+
+        xs1 = []
+        for idx in range(self.depth):
+            y1, x1 = self.downs1[idx](x1)
+            xs1.append(y1)
+        
+        xs2 = []
+        for idx in range(self.depth):
+            y2, x2 = self.downs2[idx](x2)
+            xs2.append(y2)
+
+        x = self.bottleneck(xs1[-1], xs2[-1])
+        if self.dim_up < self.dim:
+            x = torch.squeeze(x, dim=(2 + self.compress_dim))
+
+        for idx in range(self.depth):
+            x = self.ups[idx](x, xs1[self.depth - idx - 1], xs2[self.depth - idx - 1])
+
+        x = self.outc(x)
+        if self.dim_up < self.dim:
+            # Input has a compressed dimension which we restore to have a correct output shape
+            x = torch.unsqueeze(x, 2 + self.compress_dim)
+
+        return x
+
+    def compute_shape_bottleneck_from_output(self, shape_out, compress_dim=1):
+        tshape = list(shape_out)
+        dims = [val for val in range(len(shape_out)) if val != compress_dim]
+        for block in self.up_blocks:
+            if len(block) == 2:
+                upsample = True
+            else:
+                upsample = block[2]
+            if upsample:
+                for dim in dims:
+                    tshape[dim] = tshape[dim] // 2
+
+        return tshape
+
+    def compute_shape_in(self, shape_out, compress_dim=1):
+        tshape = list(shape_out)
+        dims = [val for val in range(len(shape_out)) if val != compress_dim]
+
+        assert np.all([is_power2(tshape[dim]) for dim in dims]),\
+            'Output dimensions in the non-compressed dimension should be powers of two'
+
+        for block in self.up_blocks:
+            if len(block) == 2:
+                upsample = True
+            else:
+                upsample = block[2]
+            if upsample:
+                for dim in dims:
+                    tshape[dim] = tshape[dim] // 2
+        for block in self.down_blocks:
+            if len(block) == 3:
+                downsample = True
+            else:
+                downsample = block[3]
+            if downsample:
+                for dim in dims:
+                    tshape[dim] = tshape[dim] * 2
+            tshape[compress_dim] = tshape[compress_dim] + 2*block[1]
+        return tshape
+
+    def compute_shape_out(self, shape_in, compress_dim=1):
+        tshape = list(shape_in)
+        dims = [val for val in range(len(shape_in)) if val != compress_dim]
+
+        assert np.all([is_power2(tshape[dim]) for dim in dims]), \
+            'Output dimensions in the non-compressed dimension should be powers of two'
+
+        for block in self.down_blocks:
+            if len(block) == 3:
+                downsample = True
+            else:
+                downsample = block[3]
+            if downsample:
+                for dim in dims:
+                    tshape[dim] = tshape[dim] // 2
+            tshape[compress_dim] = tshape[compress_dim] - 2 * block[1]
+        for block in self.up_blocks:
+            if len(block) == 2:
+
+                upsample = True
+            else:
+                upsample = block[2]
+            if upsample:
+                for dim in dims:
+                    tshape[dim] = tshape[dim] * 2
+        return tshape
+
 
 class BottleneckBlock(nn.Module):
     def __init__(self, shape_in, in_ch, int_ch=1024, activation='relu'):
@@ -299,6 +628,98 @@ class UpsampleBlock(nn.Module):
                     x = torch.cat([x1[:, :, :, :, x1_shape[4] // 2], self.up(x2) if self.upscale else x2], dim=1)
         else:
             x = torch.cat([x1, self.up(x2)], dim=1)
+
+        y = self.activation(x, inplace=True)
+        for conv in self.convs:
+            y = conv(y)
+            y = self.activation(y, inplace=True)
+
+        x = self.adaptation(x)
+        return x + y
+
+
+class UpsampleBlock2(nn.Module):
+    def __init__(self, in_ch, out_ch, n_conv, dim=3, conv_dim=3, compress_dim=1, dropout_prob=0.0, use_group_norm=False,
+                 num_groups=4, upscale=True, mode='bilinear', activation='relu'):
+        super(UpsampleBlock2, self).__init__()
+
+        if activation == 'relu':
+            self.activation = F.relu
+        elif activation == 'elu':
+            self.activation = F.elu
+        else:
+            raise NotImplementedError("{} not available.".format(activation))
+        self.dropout_prob = dropout_prob
+        self.dim = dim
+        self.conv_dim = conv_dim
+        self.compress_dim = compress_dim
+        self.upscale = upscale
+        if conv_dim == 2:
+            us_ker = 2
+            kernel_size = 3
+        else:
+            us_ker = [2, 2, 2]
+            us_ker[compress_dim] = 1
+            kernel_size = [3, 3, 3]
+            kernel_size[compress_dim] = 1
+        if upscale:
+            if mode in ['bilinear', 'nearest']:
+                self.up = lambda x_in: torch.nn.functional.interpolate(
+                    x_in, mode=mode, scale_factor=us_ker, align_corners=False)#, recompute_scale_factor=True)
+            else:
+                raise NotImplementedError("Mode {} not available.".format(mode))
+
+        self.convs = nn.ModuleList()
+
+        if conv_dim == 2:
+            self.adaptation = nn.Conv2d(in_ch, out_ch, kernel_size=1)
+        else:
+            self.adaptation = nn.Conv3d(in_ch, out_ch, kernel_size=1)
+        t = in_ch
+        if use_group_norm:
+            for _ in range(n_conv):
+                if conv_dim == 3:
+                    self.convs.append(nn.Sequential(nn.Conv3d(t, out_ch, kernel_size=kernel_size, padding=1),
+                                                   nn.GroupNorm(num_groups, out_ch)))
+                else:
+                    self.convs.append(nn.Sequential(nn.Conv2d(t, out_ch, kernel_size=kernel_size, padding=1),
+                                                   nn.GroupNorm(num_groups, out_ch)))
+                t = out_ch
+        else:
+            for _ in range(n_conv):
+                if conv_dim == 3:
+                    self.convs.append(nn.Conv3d(t, out_ch, kernel_size=kernel_size, padding=1))
+                else:
+                    self.convs.append(nn.Conv2d(t, out_ch, kernel_size=kernel_size, padding=1))
+                t = out_ch
+
+
+    def forward(self, x2, x1, x0):
+        # x2 for upsample input
+        # x1 for skip connections
+        x0_shape = list(x0.size())
+        x1_shape = list(x1.size())
+        x2_shape = list(x2.size())
+        if self.dim == 3:
+            if self.conv_dim == 3:
+                # Crop tensor from skip-connections to 3d patch in compressed axis
+                delta = (x1_shape[2 + self.compress_dim] - x2_shape[2 + self.compress_dim]) // 2
+                if self.compress_dim == 0:
+                    x = torch.cat([x1[:, :, delta: x1_shape[2] - delta, :, :], x0[:, :, delta: x0_shape[2] - delta, :, :], self.up(x2) if self.upscale else x2], dim=1)
+                elif self.compress_dim == 1:
+                    x = torch.cat([x1[:, :, :, delta: x1_shape[3] - delta, :], x0[:, :, :, delta: x0_shape[3] - delta, :], self.up(x2) if self.upscale else x2], dim=1)
+                else:
+                    x = torch.cat([x1[:, :, :, :, delta: x1_shape[4] - delta], x0[:, :, :, :, delta: x0_shape[4] - delta], self.up(x2) if self.upscale else x2], dim=1)
+            else:
+                # Crop skip-connections to patch pf two-dimensional features.
+                if self.compress_dim == 0:
+                    x = torch.cat([x1[:, :, x1_shape[2] // 2, :, :], x0[:, :, x0_shape[2] // 2, :, :], self.up(x2) if self.upscale else x2], dim=1)
+                elif self.compress_dim == 1:
+                    x = torch.cat([x1[:, :, :, x1_shape[3] // 2, :], x0[:, :, x0_shape[2] // 2, :, :], self.up(x2) if self.upscale else x2], dim=1)
+                else:
+                    x = torch.cat([x1[:, :, :, :, x1_shape[4] // 2], x0[:, :, x0_shape[2] // 2, :, :], self.up(x2) if self.upscale else x2], dim=1)
+        else:
+            x = torch.cat([x1, x0, self.up(x2)], dim=1)
 
         y = self.activation(x, inplace=True)
         for conv in self.convs:
