@@ -2,26 +2,15 @@
 Author: Tessa Wagenaar
 """
 
-from dataset import CTDataset
-from dataset_CBCT import CBCTDataset
-from dataset_combined import CombinedDataset
-from dataset_duo import DuoDataset
-from preprocess import *
+from preprocess import ClipAndNormalize
 from utils.plotting import plot_2d
-from torch.utils.data import DataLoader
 from utils.image_readers import read_image
-from utils.image_writers import write_image
-
 import torchvision.transforms as transforms
-from torch.utils.tensorboard import SummaryWriter
 
 from tqdm import tqdm
 from PIL import Image
 from pathlib import Path
 
-import pickle
-import argparse
-import torch
 import logging
 import sys
 

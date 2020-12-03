@@ -6,15 +6,12 @@ import argparse
 from utils.image_readers import read_image
 
 
-# root_dir = "D:\data\cervix\patients"
-# filename = "CBCT_shapes.p"
-
 def get_shapes(root_dir):
     shapes = {}
     for patient in os.listdir(root_dir):
         try:
             img = read_image(os.path.join(
-                root_dir, patient, "CT1.nii"), no_meta=True, spacing=(0.9765625, 0.9765625, 5))
+                root_dir, patient, "CT1.nii"), no_meta=True)
             print(patient, img.shape)
             shapes[patient] = img.shape
         except:
@@ -27,12 +24,12 @@ def get_shapes_extra(root_dir):
     for patient in os.listdir(root_dir):
         try:
             img = read_image(os.path.join(root_dir, patient,
-                                          "full", "CT.nrrd"), no_meta=True, spacing=(0.9765625, 0.9765625, 5))
+                                          "full", "CT.nrrd"), no_meta=True)
             print(patient, img.shape)
             shapes[patient + "/full"] = img.shape
             
             img2 = read_image(os.path.join(root_dir, patient,
-                                          "empty", "CT.nrrd"), no_meta=True, spacing=(0.9765625, 0.9765625, 5))
+                                          "empty", "CT.nrrd"), no_meta=True)
             print(patient, img2.shape)
             shapes[patient + "/empty"] = img2.shape
         except:
@@ -67,8 +64,6 @@ def main(args):
     elif args.extra_CT:
         print("parse extra CTs")
         shapes = get_shapes_extra(args.root_dir)
-        # shapes_2 = get_shapes(args.root_dir)
-        # shapes.update(shapes_2)
     else:
         print("parse CTs")
         shapes = get_shapes(args.root_dir)

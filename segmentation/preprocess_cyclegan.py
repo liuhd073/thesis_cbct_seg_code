@@ -38,7 +38,7 @@ def process_CT(source_dir, target_dir):
                 image_index += 1
                 im = Image.fromarray(np.uint8(X.squeeze() * 255), 'L')
                 im.save(f"TEMP/NO_TABLE_{image_index}_{f.parent.stem}.jpg")
-            exit(1)
+
         bbox = (stats.mode(bboxes[:,0])[0][0], stats.mode(bboxes[:,1])[0][0], stats.mode(bboxes[:,2])[0][0], stats.mode(bboxes[:,3])[0][0])
         image = np.clip(image, 0, image.max())
         image[:,bbox[0]:512, bbox[1]:bbox[3]] = 0
@@ -58,7 +58,7 @@ def process_CT(source_dir, target_dir):
         bboxes = np.array(get_table(image, clip_val=200, margin=2500, show_imgs=False))
         if len(bboxes) == 0:
             print("Table not found in image!")
-            exit(1)
+
         bbox = (stats.mode(bboxes[:,0])[0][0], stats.mode(bboxes[:,1])[0][0], stats.mode(bboxes[:,2])[0][0], stats.mode(bboxes[:,3])[0][0])
         image = np.clip(image, 0, image.max())
         image[:,bbox[0]:512, bbox[1]:bbox[3]] = 0
@@ -84,7 +84,7 @@ def process_CT(source_dir, target_dir):
                 image_index += 1
                 im = Image.fromarray(np.uint8(X.squeeze() * 255), 'L')
                 im.save(f"TEMP/NO_TABLE_{image_index}_{f.parent.stem}.jpg")
-            exit(1)
+
         bbox = (stats.mode(bboxes[:,0])[0][0], stats.mode(bboxes[:,1])[0][0], stats.mode(bboxes[:,2])[0][0], stats.mode(bboxes[:,3])[0][0])
         image = np.clip(image, 0, image.max())
         image[:,bbox[0]:512, bbox[1]:bbox[3]] = 0
@@ -118,7 +118,6 @@ def process_CBCT(source_dir, target_dir):
             cbct_count += 1
             image = transform_CT({"image": image})["image"]
             scan_id += 1
-            if scan_id in [13,14,15,16,23,24,31,36,37,42,55,56,65,66,73,74,77,78,81,82,87,99,100,101,102]: continue
             for X in image[10:-10]:
                 image_index += 1
                 im = Image.fromarray(np.uint8(X.squeeze() * 255), 'L')
@@ -152,7 +151,6 @@ def process_CBCT(source_dir, target_dir):
             if cbct_count > 2: break
             cbct_count += 1
             scan_id += 1
-            if scan_id > 4 and scan_id < 10: continue
             image, meta = read_image(str(f))
             image = transform_CT({"image": image})["image"]
             for X in image[10:-10]:

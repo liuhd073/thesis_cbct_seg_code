@@ -12,14 +12,12 @@ from PIL import Image
 def get_table(image, clip_val=300, margin=2500, show_imgs=False):
     bboxes = []
     image = np.clip(image, 0, image.max())
-    # print("FIND TABLE IN IMAGE")
     for i, im in enumerate(image):
         im_white = np.clip(im, clip_val, clip_val+1) - clip_val
 
         im = Image.fromarray(np.uint8(im_white * 255), 'L')
-        # im.save(f"TEMP/GET_TABLE__{i}.jpg")
 
-        labels_mask = measure.label(im_white)                       
+        labels_mask = measure.label(im_white)
         regions = measure.regionprops(labels_mask)
         regions.sort(key=lambda x: x.area, reverse=True)
         if len(regions) > 1:
@@ -37,7 +35,7 @@ def get_table(image, clip_val=300, margin=2500, show_imgs=False):
                 start_id = 1
             labels_mask[regions[0].coords[:,0], regions[0].coords[:,1]] = 0
         else: continue
-        # print(regions[start_id].area < 1000, regions[start_id].centroid[0] < 200, regions[start_id].area, regions[start_id].centroid[0])
+
         if regions[start_id].area < 1000 or regions[start_id].centroid[0] < 200:
             continue
         if len(regions) > start_id:
