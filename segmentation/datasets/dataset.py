@@ -31,14 +31,14 @@ class CTDataset(Dataset):
 
     def _get_segmentation(self, segmentations):
         if len(segmentations) == 2:
-            seg_bladder = read_image(segmentations[0], no_meta=True) #, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
-            seg_cervix_uterus = read_image(segmentations[1], no_meta=True) #, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
+            seg_bladder = read_image(segmentations[0], no_meta=True)
+            seg_cervix_uterus = read_image(segmentations[1], no_meta=True)
             all_segs = seg_bladder + seg_cervix_uterus
         # Combine cervix and uterus segmentation
         elif len(segmentations) == 3:
-            seg_bladder = read_image(segmentations[0], no_meta=True) #, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
-            seg_cervix = read_image(segmentations[1], no_meta=True) #, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
-            seg_uterus = read_image(segmentations[2], no_meta=True) #, spacing=(0.9765625, 0.9765625, 5), interpolator='nearest')
+            seg_bladder = read_image(segmentations[0], no_meta=True)
+            seg_cervix = read_image(segmentations[1], no_meta=True)
+            seg_uterus = read_image(segmentations[2], no_meta=True)
             seg_cervix_uterus = (seg_cervix | seg_uterus)
             all_segs = seg_bladder + seg_cervix + seg_uterus
         start = int((all_segs.shape[1] - 512) / 2)
@@ -58,15 +58,12 @@ class CTDataset(Dataset):
             segmentation = read_object(cache_fn_seg)
         else:
             image_path, segmentation_paths = self.data[patient]
-            image = read_image(image_path, no_meta=True) #, spacing=(0.9765625, 0.9765625, 5))
+            image = read_image(image_path, no_meta=True)
             segmentation = self._get_segmentation(segmentation_paths)
             
             if len(image.shape) == 3:
                 # add "channels" dimension if it is not present
                 image = np.expand_dims(image, axis=0)
-
-            # save_object(image, cache_fn)
-            # save_object(segmentation, cache_fn_seg)
 
         return image, segmentation
 
@@ -96,8 +93,8 @@ class CTDataset(Dataset):
 
         sample = {"image": im_slice.squeeze(0), "target": seg_slice.squeeze(1)}
         sample = self.transform(sample)
-        im_slice = np.expand_dims(sample["image"],0)
-        seg_slice = np.expand_dims(sample["target"],1)
+        im_slice = np.expand_dims(sample["image"], 0)
+        seg_slice = np.expand_dims(sample["target"], 1)
 
         assert (
             0 not in seg_slice.shape

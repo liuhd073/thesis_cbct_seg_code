@@ -34,9 +34,8 @@ class CBCTDataset(Dataset):
             seg_bladder = read_image(segmentations[0], no_meta=True)
             seg_cervix_uterus = read_image(segmentations[1], no_meta=True)
 
-        start = 0
-        seg_bladder = crop_to_bbox(seg_bladder, (0, start, start, seg_bladder.shape[0], 512, 512))
-        seg_cervix_uterus = crop_to_bbox(seg_cervix_uterus, (0, start, start, seg_cervix_uterus.shape[0], 512, 512))
+        seg_bladder = crop_to_bbox(seg_bladder, (0, 0, 0, seg_bladder.shape[0], 512, 512))
+        seg_cervix_uterus = crop_to_bbox(seg_cervix_uterus, (0, 0, 0, seg_cervix_uterus.shape[0], 512, 512))
         all_segs = seg_bladder + seg_cervix_uterus
         other = all_segs < 1
         segs = [seg_bladder, seg_cervix_uterus, other]
