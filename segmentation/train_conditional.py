@@ -14,7 +14,7 @@ from pathlib import Path
 from models.XY_models import Ynetwork, YnetworkSkip, YnetworkSeg
 from torch.utils.data import DataLoader
 
-from dataset_duo import DuoDataset
+from datasets.dataset_duo import DuoDataset
 from preprocess import ClipAndNormalize, GaussianAdditiveNoise, RandomElastic
 from utils.plotting import plot_2d
 from mini_model import UNetResBlocks 
@@ -131,14 +131,14 @@ def evaluate(dl_val, writer, model, device, criterion, j, max_iters=None):
     losses = {"all": [], "segs": [], "bladder": [], "cervix": [], "background": []}
     softmax = nn.LogSoftmax(1)
     i = 1
-    j=1
+    j = 1
     split_loss = SplitLoss()
     
 
     model.eval()
     for (X_cbct, X_ct, Y_cbct, Y_ct) in tqdm(dl_val):
         logger.debug(f"Example: {j}")
-        j+=1
+        j += 1
         if args.mc_train:
             if len(Y_cbct.argmax(1).unique()) < 2:
                 continue
@@ -291,7 +291,7 @@ def main(args):
 
     transform= transforms.Compose(
         [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(750, 1250)])#, RandomElastic((21,512,512))])
-    
+
     ds = DuoDataset(files_train, transform=transform, n_slices=21)
     dl = DataLoader(ds, batch_size=1, shuffle=args.shuffle, num_workers=6)
 

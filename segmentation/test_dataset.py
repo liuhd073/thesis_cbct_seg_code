@@ -2,10 +2,10 @@
 Author: Tessa Wagenaar
 """
 
-from dataset import CTDataset
-from dataset_CBCT import CBCTDataset
-from dataset_combined import CombinedDataset
-from dataset_duo import DuoDataset
+from datasets.dataset import CTDataset
+from datasets.dataset_CBCT import CBCTDataset
+from datasets.dataset_combined import CombinedDataset
+from datasets.dataset_duo import DuoDataset
 from preprocess import *
 from utils.plotting import plot_2d
 from torch.utils.data import DataLoader
@@ -43,13 +43,10 @@ def _log_images(X, Y, i, writer, tag="test_dataset"):
 
     logger.debug(f"{seg_arr_other.shape}, {seg_arr_other.sum()}")
 
-    # print(Y[:, 0, :, :, :].squeeze().unique())
     writer.add_image(
         f"{tag}/bladder_gt", seg_arr_bladder, i, dataformats="HW")
     writer.add_image(
         f"{tag}/cervix_gt", seg_arr_cervix, i, dataformats="HW")
-    # writer.add_image(
-        # f"{tag}/other_gt", seg_arr_other, i, dataformats="HW")
     writer.add_image(
         f"{tag}/mask_bladder", masked_img_bladder, i, dataformats="HWC")
     writer.add_image(
@@ -63,24 +60,29 @@ def test(args):
         open("files_CBCT_train.p", 'rb'))  # training
     files_CBCT_val = pickle.load(
         open("files_CBCT_validation.p", 'rb'))  # validation
-    files_CBCT_test = pickle.load(open("files_CBCT_test.p", 'rb'))
+    files_CBCT_test = pickle.load(
+        open("files_CBCT_test.p", 'rb'))  # test
 
     # Load datasets
     files_CT_train = pickle.load(
         open("files_CT_train.p", 'rb'))  # training
     files_CT_val = pickle.load(
         open("files_CT_validation.p", 'rb'))  # validation
+    files_CBCT_test = pickle.load(
+        open("files_CT_test.p", 'rb'))  # test
 
     # Load datasets
     files_CBCT_CT_train = pickle.load(
         open("files_CBCT_CT_train.p", 'rb'))  # training
     files_CBCT_CT_val = pickle.load(
         open("files_CBCT_CT_validation.p", 'rb'))  # validation
+    files_CBCT_test = pickle.load(
+        open("files_CBCT_CT_test.p", 'rb'))  # test
 
     transform_CBCT= transforms.Compose(
-        [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(800, 1250)])#, RandomElastic((21,512,512))])
+        [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(800, 1250)])
     transform_CT= transforms.Compose(
-        [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(800, 1250)])#, RandomElastic((21,512,512))])
+        [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(800, 1250)])
     ds_CT = CTDataset(files_CT_val, transform=transform_CT)
     ds_CBCT = CBCTDataset(files_CBCT_val, transform=transform_CBCT)
     ds_combined = CombinedDataset(ds_CT, ds_CBCT)

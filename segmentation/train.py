@@ -14,10 +14,10 @@ from pathlib import Path
 from models.resblockunet import ResBlockUnet
 from torch.utils.data import DataLoader
 
-from dataset import CTDataset
-from dataset_CBCT import CBCTDataset
-from dataset_combined import CombinedDataset
-from dataset_duo import DuoDataset
+from datasets.dataset import CTDataset
+from datasets.dataset_CBCT import CBCTDataset
+from datasets.dataset_combined import CombinedDataset
+from datasets.dataset_duo import DuoDataset
 from preprocess import ClipAndNormalize, GaussianAdditiveNoise, RandomElastic
 from utils.plotting import plot_2d
 from mini_model import UNetResBlocks 
@@ -303,9 +303,9 @@ def main(args):
     print(f"file lengths: {len(files_CBCT_train)}, {len(files_CT_train)}")
 
     transform_CBCT= transforms.Compose(
-        [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(800, 1250)])#, RandomElastic((21,512,512))])
+        [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(800, 1250)])
     transform_CT= transforms.Compose(
-        [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(800, 1250)])#, RandomElastic((21,512,512))])
+        [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(800, 1250)])
     ds_CT = CTDataset(files_CT_train, transform=transform_CT)
     ds_CBCT = CBCTDataset(files_CBCT_train, transform=transform_CBCT)
     ds_duo = DuoDataset(files_sCT_train, transform=transform_CBCT, n_slices=21, cbct_only=True)

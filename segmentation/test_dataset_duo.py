@@ -2,10 +2,10 @@
 Author: Tessa Wagenaar
 """
 
-from dataset import CTDataset
-from dataset_CBCT import CBCTDataset
-from dataset_combined import CombinedDataset
-from dataset_duo import DuoDataset
+from datasets.dataset import CTDataset
+from datasets.dataset_CBCT import CBCTDataset
+from datasets.dataset_combined import CombinedDataset
+from datasets.dataset_duo import DuoDataset
 from preprocess import *
 from utils.plotting import plot_2d
 from torch.utils.data import DataLoader
@@ -69,7 +69,7 @@ def test():
     files_CBCT_CT_val = pickle.load(
         open("files_CBCT_CT_validation.p", 'rb'))  # validation
     files_CBCT_CT_test = pickle.load(
-        open("files_CBCT_CT_test.p", 'rb'))  # validation
+        open("files_CBCT_CT_test.p", 'rb'))  # testing
 
     transform_CT= transforms.Compose(
         [GaussianAdditiveNoise(0, 10), RandomElastic((21,512,512)), ClipAndNormalize(800, 1250)])#, RandomElastic((21,512,512))])

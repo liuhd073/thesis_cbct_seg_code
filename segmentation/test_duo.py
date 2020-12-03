@@ -12,7 +12,7 @@ from utils.plotting import plot_2d
 from models.XY_models import Ynetwork
 from torch.utils.data import DataLoader
 from preprocess import ClipAndNormalize
-from dataset_duo import DuoDataset
+from datasets.dataset_duo import DuoDataset
 from datetime import datetime
 from utils.nikolov_metrics import *
 import skimage
@@ -148,21 +148,10 @@ def test(args, dl, writer, model):
         loss = criterion(Y_hat, Y_cbct.argmax(1))
         tmp_losses.append(loss.detach().cpu().item())
 
-        # if len(Y_cbct.argmax(1).unique()) > 1:
-            # seg_slices += 1
         segmentations[0].append(
             Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu() > 0.5)
         segmentations[1].append(
             Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu() > 0.5)
-            # logger.debug(f"Add segmentation: {seg_slices}") 
-        # else:
-        #     all_zeros += 1
-
-        #     logger.debug(f"Add zeros: {all_zeros}")
-        #     segmentations[0].append(
-        #         Y_hat.exp()[:, 0, :, :, :].squeeze().detach().cpu() > 2.0)
-        #     segmentations[1].append(
-        #         Y_hat.exp()[:, 1, :, :, :].squeeze().detach().cpu() > 2.0)
 
         img_i += 1
 
@@ -185,10 +174,8 @@ def test(args, dl, writer, model):
             seg_bladder = torch.stack(segmentations[0]).detach().cpu().numpy()
             seg_cervix = torch.stack(segmentations[1]).detach().cpu().numpy()
 
-            print("Segmentation Pixels:", seg_bladder.sum(), seg_cervix.sum())
-
             if args.post_process:
-                labels_mask = measure.label(seg_bladder)                       
+                labels_mask = measure.label(seg_bladder)
                 regions = measure.regionprops(labels_mask)
                 regions.sort(key=lambda x: x.area, reverse=True)
                 if len(regions) > 1:
@@ -197,7 +184,7 @@ def test(args, dl, writer, model):
                 labels_mask[labels_mask!=0] = 1
                 seg_bladder = labels_mask
 
-                labels_mask = measure.label(seg_cervix)                       
+                labels_mask = measure.label(seg_cervix)
                 regions = measure.regionprops(labels_mask)
                 regions.sort(key=lambda x: x.area, reverse=True)
                 if len(regions) > 1:
@@ -211,8 +198,6 @@ def test(args, dl, writer, model):
                 args.test_folder, patient.replace("/", "_")), metadata=metadata, ref_fn=True)
             write_image(seg_cervix.astype(np.uint8), "{}/{}_seg_cervix_uterus.nrrd".format(
                 args.test_folder, patient.replace("/", "_")), metadata=metadata, ref_fn=True)
-            # write_image(cbct, "{}/{}_image.nrrd".format(
-            #     args.test_folder, patient.replace("/", "_")), metadata=metadata, ref_fn=True)
             metrics_bladder = calculate_metrics(y_bladder.astype(bool), seg_bladder.astype(bool), metadata["spacing"], 25.0, [0.5, 1.0, 1.5, 3.0])
             metrics_cervix = calculate_metrics(y_cervix.astype(bool), seg_cervix.astype(bool), metadata["spacing"], 25.0, [0.5, 1.0, 1.5, 3.0])
 
@@ -225,7 +210,7 @@ def test(args, dl, writer, model):
                 logger.info(f"{m} cervix: {v}")
             
             segmentations = {0: [], 1: [], "y_bladder": [], "y_cervix": [], "cbct": []}
-            reset_shape = True            
+            reset_shape = True
 
         torch.cuda.empty_cache()
 
@@ -247,12 +232,10 @@ def main(args):
     image_shapes = pickle.load(open("files_sCT_pCT_test.p", 'rb'))
 
     transform_CBCT= transforms.Compose(
-        [ClipAndNormalize(800, 1250)])#, RandomElastic((21,512,512))])
+        [ClipAndNormalize(800, 1250)])
     ds = DuoDataset(image_shapes, transform=transform_CBCT, n_slices=21, return_meta=True)
     if args.save_3d:
         dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=12)
-        # _, metadata = read_image("/data/cervix/converted/CervixLoP-1/full/CT.nrrd")
-        # print(metadata)
     else:
         dl = DataLoader(ds, batch_size=1, shuffle=True, num_workers=12)
 

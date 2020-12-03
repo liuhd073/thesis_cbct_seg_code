@@ -2,10 +2,10 @@
 Author: Tessa Wagenaar
 """
 
-from dataset import CTDataset
-from dataset_CBCT import CBCTDataset
-from dataset_combined import CombinedDataset
-from dataset_duo import DuoDataset
+from datasets.dataset import CTDataset
+from datasets.dataset_CBCT import CBCTDataset
+from datasets.dataset_combined import CombinedDataset
+from datasets.dataset_duo import DuoDataset
 from preprocess import *
 from utils.plotting import plot_2d
 from torch.utils.data import DataLoader
@@ -45,9 +45,7 @@ def sort_slices(args):
         match = re.match(r".*[0-9]+.*\_fake\.png", str(file))
         if match: 
             CBCT_slices["fake"].append(match[0])
-        
 
-        # if i > 500: break
 
     slices = {"real": defaultdict(lambda: defaultdict(list)), "fake": defaultdict(lambda: defaultdict(list))}
     for s in CBCT_slices["real"]:
@@ -71,12 +69,9 @@ def save_scans(args, slices):
                 im_frame = Image.open(tup[1]).convert('L')
                 np_array = np.array(im_frame.getdata()).reshape((512,512)) / 255.0
                 image.append(np_array)
-                # print(np_array.min(), np_array.max())
 
             img = np.stack(image)
             img = img * 1500 + 250
-            # print(img.min(), img.max())
-            # print(patient, scan, (source_dir / patient / (scan + ".nii")).exists())
             if not (source_dir / patient / (f"bladder_{scan.lower()}.nii")).exists():
                 continue
             _, meta = read_image(str(source_dir / patient / ("CT1.nii")))
@@ -87,8 +82,6 @@ def save_scans(args, slices):
             write_image(img, str(args.output_dir / patient / (scan + ".nrrd")), metadata=meta)
             write_image(bladder, str(args.output_dir / patient / (f"bladder_{scan.lower()}.nrrd")), metadata=meta)
             write_image(cervix, str(args.output_dir / patient / (f"cervix_uterus_{scan.lower()}.nrrd")), metadata=meta)
-        #     break
-        # break
 
 
 def main(args):
@@ -110,7 +103,7 @@ def parse_args():
     args.output_dir = Path(args.output_dir)
 
     return args
-                    
+
 
 if __name__ == "__main__":
     args = parse_args()
